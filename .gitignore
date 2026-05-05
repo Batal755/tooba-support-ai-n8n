@@ -70,6 +70,18 @@ web_modules/
 .env.*
 !.env.example
 
+# Local secrets — never commit
+.env.local
+secrets/
+*.secret
+*.token
+*.key
+tokens.json
+credentials.json
+
+# n8n local data
+.n8n/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

@@ -1,0 +1,14 @@
+{
+  "name": "tooba-support-ai-n8n",
+  "version": "1.0.0",
+  "description": "n8n automation: Outlook → OpenAI → Slack for Tooba support email processing",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "validate": "node scripts/validate-workflow.mjs",
+    "import:n8n": "node scripts/import-to-n8n.mjs"
+  },
+  "license": "MIT"
+}
