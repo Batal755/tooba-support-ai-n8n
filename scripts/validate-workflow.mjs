@@ -127,11 +127,13 @@ const checks = [
     msg: 'Code node present',
   },
   {
-    test: () => !JSON.stringify(workflow).includes('sk-'),
+    // Require 20+ chars after sk- so documentation references like "sk-…" don't fire
+    test: () => !/sk-[A-Za-z0-9]{20,}/.test(JSON.stringify(workflow)),
     msg: 'No OpenAI key in workflow JSON',
   },
   {
-    test: () => !JSON.stringify(workflow).includes('xoxb-'),
+    // Require 24+ chars after xoxb- so documentation references like "xoxb-…" don't fire
+    test: () => !/xoxb-[A-Za-z0-9-]{24,}/.test(JSON.stringify(workflow)),
     msg: 'No Slack token in workflow JSON',
   },
 ];
