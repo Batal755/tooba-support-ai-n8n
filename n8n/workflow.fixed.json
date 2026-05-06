@@ -1,0 +1,551 @@
+{
+  "name": "Tooba Support AI – Email Processing",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "tags": [
+    "support",
+    "email",
+    "ai",
+    "tooba"
+  ],
+  "nodes": [
+    {
+      "id": "sticky-overview",
+      "name": "📌 Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        60
+      ],
+      "parameters": {
+        "content": "## Tooba Support AI – Email Processing v2\n\n**Flow:**\n1. 🔔 Outlook Trigger — polls Inbox every minute\n2. ⚙️ Config — sets Slack channel ID\n3. 📧 Normalize Email — extracts & cleans all fields, dedup check\n4. 🚦 Skip Check — IF skip=true → dead end; ELSE continue\n5. 💬 Post to Slack — sends email to #support_ai_test, captures ts\n6. 🤖 Build AI Prompt — FAQ + strict system prompt\n7. 🌐 Call OpenAI API — chat completion, retry ×3 on fail\n8. 🔍 Extract AI Reply — handles 429, multiple formats\n9. 📝 Create Outlook Draft — POST /createReply (empty body)\n10. 🖊️ Update Draft Body — PATCH with HTML content\n11. 🗂️ Map Outlook Draft ID — merge draft + AI data\n12. 🧵 Slack Thread: AI Draft — posts AI reply in thread\n\n**Error branches:**\n- OpenAI failure → ❌ Slack thread error\n- Outlook failure → ❌ Slack thread error (includes AI reply)\n\n**Credentials (configure in n8n UI):**\n- Microsoft Outlook OAuth2 (support@tooba.com)\n- OpenAI account\n- Slack Bot token (chat:write)",
+        "height": 500,
+        "width": 360,
+        "color": 7
+      }
+    },
+    {
+      "id": "sticky-security",
+      "name": "🔐 Security Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        600
+      ],
+      "parameters": {
+        "content": "## ⚠️ Security\n\n**SLACK_CHANNEL_ID is NOT a secret.**\nEdit `slackChannelId` directly in ⚙️ Config node.\n\n**Never paste here:**\n- Slack Bot token (xoxb-…)\n- OpenAI API key (sk-…)\n- Microsoft OAuth token\n\nAll authentication → **n8n Credentials only**.",
+        "height": 200,
+        "width": 360,
+        "color": 3
+      }
+    },
+    {
+      "id": "sticky-skip",
+      "name": "💡 Skip Logic",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        780,
+        80
+      ],
+      "parameters": {
+        "content": "## 🚦 Skip Check\n\nSkips if **any** of:\n- `messageId` missing\n- `isDraft = true`\n- sender = support@tooba.com\n- Subject starts with Re:/Ответить: from own address\n- Body < 3 chars\n- messageId already processed (dedup, last 500)\n\nSkipped items produce no Slack message, no OpenAI call, no draft.",
+        "height": 180,
+        "width": 280,
+        "color": 5
+      }
+    },
+    {
+      "id": "sticky-openai-retry",
+      "name": "🔄 OpenAI Retry",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        80
+      ],
+      "parameters": {
+        "content": "## 🔄 OpenAI Retry\n\nRetry On Fail = true\nMax Tries = 3\nWait = 5 000 ms\n\nOn final failure → error output → Slack thread with error message.\n\nExtract AI Reply also catches 429 / rate limit in response body.",
+        "height": 150,
+        "width": 240,
+        "color": 5
+      }
+    },
+    {
+      "id": "node-outlook-trigger",
+      "name": "🔔 Outlook Trigger",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        60,
+        300
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "folder": "Inbox",
+        "filters": {
+          "subject": "Tooba Feedback"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Microsoft Outlook – support@tooba.com"
+        }
+      },
+      "notes": "TODO: Select your Microsoft Outlook OAuth2 credential. Subject filter 'Tooba Feedback' is set — remove or change to process all emails."
+    },
+    {
+      "id": "node-config",
+      "name": "⚙️ Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ── Workflow configuration ────────────────────────────────────────────\n// Edit slackChannelId when the Slack channel changes.\n// slackChannelId is NOT a secret — it is a channel ID, not a token.\n// Tokens/keys must only live in n8n Credentials.\n\nconst email = $input.first().json;\n\nreturn [{\n  json: {\n    slackChannelId: 'C0ATU9ZD2UF',    // #support_ai_test\n    ...email\n  }\n}];"
+      },
+      "notes": "Edit slackChannelId here if the Slack channel changes. No secrets here — use n8n Credentials for tokens."
+    },
+    {
+      "id": "node-normalize-email",
+      "name": "📧 Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Robust email normalizer v2 — handles multiple Outlook/Graph JSON shapes.\n// Outputs: messageId, internetMessageId, senderName, senderEmail, subject,\n//          receivedDateTime, rawBodyHtml, cleanBody, skip, skipReason.\n\nconst item = $input.first().json;\n\n// ── 1. IDs ────────────────────────────────────────────────────────────────\nconst messageId = item.id || item.messageId || null;\nconst internetMessageId = item.internetMessageId || null;\n\n// ── 2. Sender ─────────────────────────────────────────────────────────────\nconst fromObj =\n  item.from?.emailAddress ||\n  item.sender?.emailAddress ||\n  item.from ||\n  {};\n\nlet senderEmail = (\n  fromObj.address || fromObj.email || fromObj.emailAddress || ''\n).toLowerCase().trim();\n\nlet senderName = (\n  fromObj.name || fromObj.displayName || senderEmail || 'Unknown Sender'\n).trim();\n\nif (!senderName) senderName = senderEmail || 'Unknown Sender';\n\n// ── 3. Subject, received date ─────────────────────────────────────────────\nconst subject = (item.subject || '(No Subject)').trim();\nconst receivedDateTime = item.receivedDateTime || item.createdDateTime || '';\n\n// ── 4. Body ───────────────────────────────────────────────────────────────\nconst rawBodyHtml = item.body?.content || '';\n\nfunction htmlToText(html) {\n  if (!html) return '';\n  return html\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<\\/div>/gi, '\\n')\n    .replace(/<\\/li>/gi, '\\n')\n    .replace(/<\\/tr>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\nconst cleanBody = htmlToText(rawBodyHtml) || item.bodyPreview || '';\n\n// ── 5. Skip logic ─────────────────────────────────────────────────────────\nlet skip = false;\nlet skipReason = '';\nconst subjLow = subject.toLowerCase();\n\nif (!messageId) {\n  skip = true; skipReason = 'messageId missing';\n}\nif (!skip && item.isDraft === true) {\n  skip = true; skipReason = 'item is a draft';\n}\nif (!skip && senderEmail.includes('support@tooba.com')) {\n  skip = true; skipReason = 'sender is support@tooba.com — own email';\n}\nif (!skip && (subjLow.startsWith('re:') || subjLow.startsWith('ответить:')) && senderEmail.includes('support@tooba.com')) {\n  skip = true; skipReason = 're:/ответить: from support@tooba.com';\n}\nif (!skip && cleanBody.length < 3) {\n  skip = true; skipReason = 'cleanBody < 3 chars';\n}\n\n// Dedup — keep last 500 processed message IDs in workflow static data\nif (!skip && messageId) {\n  const sd = $getWorkflowStaticData('global');\n  if (!Array.isArray(sd.processedIds)) sd.processedIds = [];\n  if (sd.processedIds.includes(messageId)) {\n    skip = true; skipReason = 'duplicate — messageId already processed';\n  } else {\n    sd.processedIds.push(messageId);\n    if (sd.processedIds.length > 500) sd.processedIds = sd.processedIds.slice(-500);\n  }\n}\n\n// ── 6. Output ─────────────────────────────────────────────────────────────\nreturn [{\n  json: {\n    messageId,\n    internetMessageId,\n    senderName,\n    senderEmail: senderEmail || 'UNKNOWN',\n    subject,\n    receivedDateTime,\n    rawBodyHtml,\n    cleanBody,\n    webLink: item.webLink || null,\n    conversationId: item.conversationId || null,\n    skip,\n    skipReason\n  }\n}];\n"
+      },
+      "notes": "v2: handles multiple Outlook JSON shapes, skip logic (draft/self/Re:/dedup/empty body), dedup via $getWorkflowStaticData (last 500 IDs)."
+    },
+    {
+      "id": "node-skip-check",
+      "name": "🚦 Skip Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-condition",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "TRUE (skip=true) → output 0 → dead end. FALSE (skip=false) → output 1 → Post to Slack."
+    },
+    {
+      "id": "node-post-slack-main",
+      "name": "💬 Post to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{ $('⚙️ Config').first().json.slackChannelId }}",
+        "text": "=📩 Новое письмо в support@tooba.com\n\nОт: {{ $json.senderName }} ({{ $json.senderEmail }})\nТема: {{ $json.subject }}\n\n━━━━━━━━━━━━━━━━━━━━\nТЕКСТ ПИСЬМА:\n{{ $json.cleanBody }}\n\n━━━━━━━━━━━━━━━━━━━━\n{{ $json.webLink ? 'Outlook: ' + $json.webLink : '' }}",
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      },
+      "notes": "TODO: Select Slack credential (type: slackApi, Bot token). Bot must be invited to #support_ai_test. Channel ID comes from ⚙️ Config node. Response 'ts' is captured downstream as slackThreadTs."
+    },
+    {
+      "id": "node-build-ai-prompt",
+      "name": "🤖 Build AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Build AI prompt node — v2 with strict system prompt + signature.\n// Source of truth: prompts/system_prompt.md + knowledge/tooba_faq.md\n//\n// TODO: Вставить Copilot_FULL_QA.txt / Tooba FAQ здесь\n//       Replace FAQ_CONTENT with the actual knowledge base content.\n\nconst email = $input.first().json;\n\n// ═══════════════════════════════════════════════════════════════════════════\n// KNOWLEDGE BASE — update in sync with knowledge/tooba_faq.md\n// TODO: Вставить Copilot_FULL_QA.txt / Tooba FAQ здесь\n// ═══════════════════════════════════════════════════════════════════════════\nconst FAQ_CONTENT = `\n## Что такое Tooba?\nTooba — платформа для управления бизнес-процессами и автоматизации рабочих задач.\n\n## Как начать работу с Tooba?\n1. Зарегистрируйтесь на tooba.com.\n2. Создайте рабочее пространство.\n3. Пройдите мастер начальной настройки.\n4. Пригласите команду: Настройки → Команда → Пригласить участника.\n\n## Как сбросить пароль?\nНа странице входа нажмите «Забыли пароль?». Введите email. Ссылка придёт в течение 5 минут. Проверьте папку «Спам».\n\n## Какие тарифные планы доступны?\n- Starter: до 5 пользователей, базовые интеграции.\n- Business: до 50 пользователей, расширенная автоматизация.\n- Enterprise: без ограничений, выделенный менеджер, SLA.\nАктуальные цены: tooba.com/pricing.\n\n## Как изменить тариф?\nНастройки → Биллинг → Изменить тариф. Апгрейд применяется немедленно.\n\n## Как добавить нового пользователя?\nТолько администратор: Настройки → Команда → Пригласить участника → email. Приглашение действует 48 часов.\n\n## Как удалить пользователя?\nНастройки → Команда → участник → Удалить из команды. Данные сохраняются.\n\n## Как подключить интеграцию?\nНастройки → Интеграции → выберите сервис → следуйте инструкции (API-ключ или OAuth).\n\n## Интеграция перестала работать?\n1. Проверьте срок действия API-ключа/токена.\n2. Убедитесь в разрешениях со стороны стороннего сервиса.\n3. Переподключите интеграцию.\n4. При сохранении ошибки — обратитесь в поддержку с описанием.\n\n## Как экспортировать данные?\nНастройки → Данные → Экспорт (форматы: CSV, JSON). Ссылка придёт на email.\n\n## Где документация?\ndocs.tooba.com | help.tooba.com\n\n## Как связаться с поддержкой?\nEmail: support@tooba.com | Чат на платформе.\nРабочие часы: Пн–Пт 09:00–18:00 МСК.\n\n## Время ответа поддержки?\n- Starter: до 2 рабочих дней.\n- Business: до 8 рабочих часов.\n- Enterprise: согласно SLA.\n`;\n\nconst systemPrompt = `Ты — ассистент технической поддержки компании Tooba.\n\nСТРОГИЕ ПРАВИЛА:\n1. Отвечай ТОЛЬКО на основе информации из базы знаний ниже.\n2. Если точного ответа НЕТ в базе знаний — ответь ТОЧНО этой фразой без каких-либо изменений:\n   \"Нет подходящего ответа — требуется проверка менеджера.\"\n3. НЕЛЬЗЯ выдумывать, домысливать или ссылаться на источники вне базы знаний.\n4. НЕ ПИШИ вводные фразы: \"Вот черновик:\", \"Добрый день, предлагаю:\", \"Вот ответ:\" и подобные.\n5. Отвечай только текстом письма — без мета-комментариев и пояснений от себя.\n6. Отвечай на том языке, на котором написал клиент.\n7. В конце ВСЕГДА добавляй подпись:\n\nС уважением,\nКоманда поддержки Tooba\n\nБАЗА ЗНАНИЙ:\n${FAQ_CONTENT}`;\n\nconst userPrompt = `Тема письма: ${email.subject}\n\nТекст письма клиента:\n${email.cleanBody}`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userPrompt,\n    email\n  }\n}];\n"
+      },
+      "notes": "TODO: Вставить Copilot_FULL_QA.txt / Tooba FAQ здесь — replace FAQ_CONTENT with actual knowledge base. Outputs systemPrompt + userPrompt strings (separate fields) for the OpenAI HTTP Request node."
+    },
+    {
+      "id": "node-call-openai",
+      "name": "🌐 Call OpenAI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.1, max_tokens: 900, messages: [{role: 'system', content: $json.systemPrompt}, {role: 'user', content: $json.userPrompt}] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "OpenAI account"
+        }
+      },
+      "notes": "TODO: Select your OpenAI credential (type: openAiApi). If credential is named 'OLD_OpenAi account', do NOT use it — the old key may be compromised. Create a new credential with a fresh API key.\n\nRetry: 3 attempts × 5 000 ms. On final failure → error output → Slack thread error message."
+    },
+    {
+      "id": "node-extract-reply",
+      "name": "🔍 Extract AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract and normalise AI reply from OpenAI HTTP response.\n// Handles: rate limits (429), multiple response formats, empty responses.\n\nconst response = $input.first().json;\nconst buildData = $('🤖 Build AI Prompt').first().json;\nconst email = buildData.email;\n\nlet aiReply = '';\nlet aiError = false;\nlet errorMessage = '';\n\n// ── 1. Check for explicit error object in response body ───────────────────\nif (response?.error) {\n  const err = response.error;\n  errorMessage = err.message || JSON.stringify(err);\n  const isRateLimit =\n    String(err.code || '').includes('rate_limit') ||\n    String(err.type || '').includes('rate_limit') ||\n    String(err.status || '').includes('429') ||\n    errorMessage.toLowerCase().includes('429') ||\n    errorMessage.toLowerCase().includes('rate limit') ||\n    errorMessage.toLowerCase().includes('too many requests');\n\n  aiReply = isRateLimit\n    ? 'Нет подходящего ответа — требуется проверка менеджера. Причина: OpenAI rate limit.'\n    : 'Нет подходящего ответа — требуется проверка менеджера.';\n  aiError = true;\n}\n\n// ── 2. Try multiple response format shapes ────────────────────────────────\nif (!aiReply) {\n  aiReply = (\n    response?.choices?.[0]?.message?.content ||\n    response?.output_text ||\n    response?.message?.content ||\n    response?.text ||\n    ''\n  ).trim();\n}\n\n// ── 3. Final fallback ─────────────────────────────────────────────────────\nif (!aiReply) {\n  aiReply = 'Нет подходящего ответа — требуется проверка менеджера.';\n  aiError = true;\n  if (!errorMessage) errorMessage = 'Empty or unexpected response from OpenAI';\n}\n\nreturn [{\n  json: {\n    aiReply,\n    aiError,\n    errorMessage,\n    messageId: email.messageId,\n    internetMessageId: email.internetMessageId,\n    senderName: email.senderName,\n    senderEmail: email.senderEmail,\n    subject: email.subject,\n    cleanBody: email.cleanBody,\n    webLink: email.webLink,\n    conversationId: email.conversationId,\n    slackThreadTs: $('💬 Post to Slack').first().json.ts\n  }\n}];\n"
+      },
+      "notes": "v2: handles 429/rate-limit in response body, multiple OpenAI response shapes. Outputs aiReply (never empty), aiError, errorMessage."
+    },
+    {
+      "id": "node-create-outlook-draft",
+      "name": "📝 Create Outlook Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/users/support@tooba.com/messages/' + $json.messageId + '/createReply' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Microsoft Outlook – support@tooba.com"
+        }
+      },
+      "notes": "Step 1 of 2 for Outlook draft. POST createReply with empty body to get draftId from Graph API response. The draft is linked to the original email thread. NOT sent.\n\nTODO: If using personal mailbox (signed-in user), change URL to:\nhttps://graph.microsoft.com/v1.0/me/messages/{messageId}/createReply\n\nRequired permissions: Mail.ReadWrite on support@tooba.com mailbox."
+    },
+    {
+      "id": "node-update-draft-body",
+      "name": "🖊️ Update Draft Body",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/users/support@tooba.com/messages/' + $('📝 Create Outlook Draft').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: { contentType: 'HTML', content: '<div style=\"font-family:Arial,sans-serif;font-size:14px\">' + $('🔍 Extract AI Reply').first().json.aiReply.split('\\n').join('<br>') + '</div>' } }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Microsoft Outlook – support@tooba.com"
+        }
+      },
+      "notes": "Step 2 of 2 for Outlook draft. PATCH /messages/{draftId} to set HTML body. Uses continueRegularOutput — if PATCH fails, Map Outlook Draft ID falls back to the draftId from the POST step. Draft still appears in Outlook Drafts and Outlook mobile."
+    },
+    {
+      "id": "node-map-outlook-draft-id",
+      "name": "🗂️ Map Outlook Draft ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Merge PATCH response (updated draft) with Extract AI Reply data.\n// Falls back to POST createReply response id if PATCH response has no id.\n\nconst patchResult = $input.first().json;\nconst createResult = $('📝 Create Outlook Draft').first().json;\nconst aiData = $('🔍 Extract AI Reply').first().json;\n\nconst outlookDraftId = patchResult?.id || createResult?.id || null;\nconst outlookDraftWebLink = patchResult?.webLink || createResult?.webLink || null;\nconst outlookBodyUpdated = !!(patchResult?.id && !patchResult?.error);\nconst outlookCreated = !!outlookDraftId;\n\nreturn [{\n  json: {\n    ...aiData,\n    outlookDraftId,\n    outlookDraftWebLink,\n    outlookBodyUpdated,\n    outlookCreated\n  }\n}];\n"
+      },
+      "notes": "Merges PATCH response with Extract AI Reply data. Falls back to POST createReply ID if PATCH failed."
+    },
+    {
+      "id": "node-slack-thread-draft",
+      "name": "🧵 Slack Thread: AI Draft",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{ $('⚙️ Config').first().json.slackChannelId }}",
+        "text": "=🤖 ЧЕРНОВИК ОТВЕТА:\n{{ $json.aiReply }}\n\nСтатус:\n{{ $json.outlookCreated ? '✅ Черновик создан в Outlook.' + ($json.outlookDraftId ? ' Draft ID: ' + $json.outlookDraftId : '') : '❌ Черновик Outlook не создан.' }}",
+        "otherOptions": {
+          "thread_ts": "={{ $json.slackThreadTs }}"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      },
+      "notes": "Posts AI draft as thread reply under the main Slack message. thread_ts = ts from 💬 Post to Slack. TODO: If thread_ts is under 'additionalFields' in your n8n Slack node version, move it there."
+    },
+    {
+      "id": "node-slack-openai-error",
+      "name": "❌ Slack: OpenAI Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        520
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{ $('⚙️ Config').first().json.slackChannelId }}",
+        "text": "=❌ OpenAI не сгенерировал черновик.\nПричина: {{ $json.error?.message || $json.message || JSON.stringify($json.error || $json) || 'неизвестная ошибка' }}\nРучной ответ требуется.",
+        "otherOptions": {
+          "thread_ts": "={{ $('💬 Post to Slack').first().json.ts }}"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      }
+    },
+    {
+      "id": "node-slack-outlook-error",
+      "name": "❌ Slack: Outlook Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        520
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "={{ $('⚙️ Config').first().json.slackChannelId }}",
+        "text": "=❌ Outlook draft не создан.\nПричина: {{ $json.error?.message || $json.message || JSON.stringify($json.error || $json) || 'неизвестная ошибка' }}\n\nAI draft:\n{{ $('🔍 Extract AI Reply').first().json.aiReply }}",
+        "otherOptions": {
+          "thread_ts": "={{ $('💬 Post to Slack').first().json.ts }}"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "🔔 Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Config": {
+      "main": [
+        [
+          {
+            "node": "📧 Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "🚦 Skip Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚦 Skip Check": {
+      "main": [
+        [],
+        [
+          {
+            "node": "💬 Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Post to Slack": {
+      "main": [
+        [
+          {
+            "node": "🤖 Build AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Build AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "🌐 Call OpenAI API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 Call OpenAI API": {
+      "main": [
+        [
+          {
+            "node": "🔍 Extract AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Slack: OpenAI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Extract AI Reply": {
+      "main": [
+        [
+          {
+            "node": "📝 Create Outlook Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Create Outlook Draft": {
+      "main": [
+        [
+          {
+            "node": "🖊️ Update Draft Body",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Slack: Outlook Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🖊️ Update Draft Body": {
+      "main": [
+        [
+          {
+            "node": "🗂️ Map Outlook Draft ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗂️ Map Outlook Draft ID": {
+      "main": [
+        [
+          {
+            "node": "🧵 Slack Thread: AI Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
