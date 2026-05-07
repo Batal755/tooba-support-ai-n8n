@@ -1,0 +1,325 @@
+{
+  "name": "Tooba Support AI Slack MVP 07.05",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "tags": [
+    "support",
+    "email",
+    "ai",
+    "tooba",
+    "mvp"
+  ],
+  "nodes": [
+    {
+      "id": "node-outlook-trigger",
+      "name": "🔔 Outlook Trigger",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        60,
+        300
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "folder": "Inbox",
+        "filters": {
+          "subject": "Tooba Feedback"
+        },
+        "options": {
+          "output": "raw"
+        }
+      },
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Microsoft Outlook account 06.05.26"
+        }
+      },
+      "notes": "TODO: Select your Microsoft Outlook OAuth2 credential.\nSubject filter 'Tooba Feedback' — remove or adjust to process all emails.\noutput:raw passes the full Graph API payload (id, body, from, sender, replyTo, isDraft, webLink…)."
+    },
+    {
+      "id": "node-normalize-email",
+      "name": "📧 Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Normalize Email — Tooba support Slack MVP\n// Extract real customer email, subject, and clean text from Outlook Raw payload.\n\nconst item = $input.first().json;\n\nfunction getEmailAddress(obj) {\n  const ea = obj?.emailAddress || obj || {};\n  return {\n    name: (ea.name || ea.displayName || '').trim(),\n    address: (ea.address || ea.email || ea.emailAddress || '').toLowerCase().trim(),\n  };\n}\n\nfunction htmlToText(input) {\n  if (!input) return '';\n\n  return String(input)\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<\\/div>/gi, '\\n')\n    .replace(/<\\/li>/gi, '\\n')\n    .replace(/<\\/tr>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\r/g, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\nconst messageId = item.id || item.messageId || null;\nconst internetMessageId = item.internetMessageId || null;\nconst subject = (item.subject || '(No Subject)').trim();\nconst receivedDateTime = item.receivedDateTime || item.createdDateTime || '';\n\nconst rawBody = item.body?.content || item.bodyPreview || '';\nlet cleanBody = htmlToText(rawBody);\n\n// Tooba feedback emails often contain the real sender in body:\n// \"Отправлено от oxotnik37@rambler.ru\"\nconst embeddedSenderMatch = cleanBody.match(/Отправлено от\\s+([^\\s<>]+@[^\\s<>]+)/i);\nconst embeddedSenderEmail = embeddedSenderMatch?.[1]?.toLowerCase()?.trim() || '';\n\n// Remove technical \"Отправлено от ...\" line from customer text.\ncleanBody = cleanBody\n  .replace(/\\n?\\s*Отправлено от\\s+[^\\s<>]+@[^\\s<>]+/i, '')\n  .trim();\n\nconst from = getEmailAddress(item.from);\nconst sender = getEmailAddress(item.sender);\n\nconst replyTo = Array.isArray(item.replyTo) && item.replyTo.length\n  ? getEmailAddress(item.replyTo[0])\n  : { name: '', address: '' };\n\nconst ccCustomer = Array.isArray(item.ccRecipients)\n  ? item.ccRecipients\n      .map(getEmailAddress)\n      .find(e =>\n        e.address &&\n        !e.address.includes('support@tooba.com') &&\n        !e.address.includes('@tooba.com') &&\n        !e.address.includes('@mx.tooba.com')\n      )\n  : null;\n\n// Priority:\n// 1. replyTo\n// 2. ccRecipients external email\n// 3. embedded \"Отправлено от ...\"\n// 4. from\n// 5. sender\nlet customer = replyTo.address\n  ? replyTo\n  : ccCustomer?.address\n    ? ccCustomer\n    : embeddedSenderEmail\n      ? { name: embeddedSenderEmail, address: embeddedSenderEmail }\n      : from.address\n        ? from\n        : sender;\n\nlet senderEmail = customer.address || 'UNKNOWN';\nlet senderName = customer.name || senderEmail;\n\nif (!senderName || senderName.toLowerCase() === senderEmail.toLowerCase()) {\n  senderName = senderEmail;\n}\n\nlet skip = false;\nlet skipReason = '';\n\nif (!messageId) {\n  skip = true;\n  skipReason = 'messageId missing';\n}\n\nif (!skip && item.isDraft === true) {\n  skip = true;\n  skipReason = 'item is draft';\n}\n\nif (!skip && senderEmail.includes('support@tooba.com')) {\n  skip = true;\n  skipReason = 'own support email';\n}\n\nif (!skip && cleanBody.length < 3) {\n  skip = true;\n  skipReason = 'empty cleanBody';\n}\n\n// For this MVP, do not process unrelated subjects.\nif (!skip && !subject.toLowerCase().includes('tooba feedback')) {\n  skip = true;\n  skipReason = 'subject does not include Tooba Feedback';\n}\n\nreturn [{\n  json: {\n    messageId,\n    internetMessageId,\n    senderName,\n    senderEmail,\n    subject,\n    receivedDateTime,\n    cleanBody,\n    rawBody,\n    webLink: item.webLink || null,\n    conversationId: item.conversationId || null,\n    skip,\n    skipReason\n  }\n}];\n"
+      },
+      "notes": "Extracts real customer address from replyTo / ccRecipients / 'Отправлено от …' / from.\nSets skip=true for drafts, own-address emails, empty bodies, or non-Tooba-Feedback subjects."
+    },
+    {
+      "id": "node-should-process",
+      "name": "✅ Should Process",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-condition",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "notes": "TRUE  (skip=true)  → output 0 → dead end — no Slack, no OpenAI.\nFALSE (skip=false) → output 1 → 💬 Post Email to Slack."
+    },
+    {
+      "id": "node-post-email-to-slack",
+      "name": "💬 Post Email to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "C0ATU9ZD2UF",
+        "text": "=📩 Новое письмо\n\nОт: {{ $json.senderName }} ({{ $json.senderEmail }})\nТема: {{ $json.subject }}\n\n━━━━━━━━━━━━━━━━━━━━\n{{ $json.cleanBody }}\n━━━━━━━━━━━━━━━━━━━━\n{{ $json.webLink ? '🔗 ' + $json.webLink : '' }}",
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      },
+      "notes": "TODO: Select Slack credential (type: slackApi, Bot token xoxb-…).\nTODO: Change channel C0ATU9ZD2UF to your actual #support_ai_test channel ID.\nBot must be invited to the channel before use.\nResponse .ts is used as thread_ts by downstream nodes."
+    },
+    {
+      "id": "node-build-ai-prompt",
+      "name": "🤖 Build AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Build AI Prompt — Tooba Support AI Slack MVP\n// Minimal prompt. No hardcoded FAQ — add your knowledge base here when ready.\n\nconst email = $input.first().json;\n\nconst systemPrompt = `Ты — ассистент службы поддержки Tooba.\nОтвечай вежливо, кратко и по делу на вопрос клиента.\nЕсли точного ответа нет — честно скажи об этом.\nНЕ ПИШИ вводные фразы: \"Вот черновик:\", \"Добрый день, предлагаю:\" и подобные.\nВ конце ВСЕГДА добавляй подпись:\n\nС уважением,\nКоманда поддержки Tooba`;\n\nconst userPrompt = `Тема письма: ${email.subject}\n\nПисьмо клиента:\n${email.cleanBody}`;\n\nreturn [{ json: { systemPrompt, userPrompt, email } }];\n"
+      },
+      "notes": "Minimal system prompt — no hardcoded FAQ. Add your knowledge base to systemPrompt when ready."
+    },
+    {
+      "id": "node-call-openai",
+      "name": "🌐 Call OpenAI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1260,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.1, max_tokens: 900, messages: [{role: 'system', content: $json.systemPrompt}, {role: 'user', content: $json.userPrompt}] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "OpenAI account"
+        }
+      },
+      "notes": "TODO: Select OpenAI credential.\nRetry: 3 × 5 000 ms. On final failure → error output → ❌ Slack: OpenAI Error."
+    },
+    {
+      "id": "node-extract-ai-reply",
+      "name": "🔍 Extract AI Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract AI Reply — Tooba Support AI Slack MVP\n\nconst response = $input.first().json;\nconst email = $('🤖 Build AI Prompt').first().json.email;\nconst slackTs = $('💬 Post Email to Slack').first().json.ts;\n\nlet aiReply = '';\nlet aiError = false;\nlet errorMessage = '';\n\nif (response?.error) {\n  const err = response.error;\n  errorMessage = err.message || JSON.stringify(err);\n  const isRateLimit =\n    String(err.code || '').includes('rate_limit') ||\n    String(err.type || '').includes('rate_limit') ||\n    errorMessage.toLowerCase().includes('429') ||\n    errorMessage.toLowerCase().includes('rate limit') ||\n    errorMessage.toLowerCase().includes('too many requests');\n  aiReply = isRateLimit\n    ? 'Нет подходящего ответа — требуется проверка менеджера. Причина: OpenAI rate limit.'\n    : 'Нет подходящего ответа — требуется проверка менеджера.';\n  aiError = true;\n}\n\nif (!aiReply) {\n  aiReply = (\n    response?.choices?.[0]?.message?.content ||\n    response?.output_text ||\n    response?.message?.content ||\n    response?.text ||\n    ''\n  ).trim();\n}\n\nif (!aiReply) {\n  aiReply = 'Нет подходящего ответа — требуется проверка менеджера.';\n  aiError = true;\n  if (!errorMessage) errorMessage = 'Empty or unexpected response from OpenAI';\n}\n\nreturn [{\n  json: {\n    aiReply,\n    aiError,\n    errorMessage,\n    messageId: email.messageId,\n    senderName: email.senderName,\n    senderEmail: email.senderEmail,\n    subject: email.subject,\n    cleanBody: email.cleanBody,\n    slackTs\n  }\n}];\n"
+      },
+      "notes": "Handles 429/rate-limit in response body, multiple OpenAI response shapes. Output: aiReply (never empty), aiError, slackTs."
+    },
+    {
+      "id": "node-slack-thread-reply",
+      "name": "🧵 Send AI Reply in Thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "C0ATU9ZD2UF",
+        "text": "=🤖 ЧЕРНОВИК ОТВЕТА:\n{{ $json.aiReply }}",
+        "otherOptions": {
+          "thread_ts": "={{ $json.slackTs }}"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      },
+      "notes": "Posts AI reply as a thread reply under the main Slack message.\nTODO: Change channel C0ATU9ZD2UF to your actual channel ID.\nTODO: If thread_ts does not appear under otherOptions in your n8n version, move it to additionalFields."
+    },
+    {
+      "id": "node-slack-openai-error",
+      "name": "❌ Slack: OpenAI Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        520
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "channel": "C0ATU9ZD2UF",
+        "text": "=❌ OpenAI не сгенерировал ответ.\nПричина: {{ $json.error?.message || $json.message || JSON.stringify($json.error || $json) || 'неизвестная ошибка' }}\nРучной ответ требуется.",
+        "otherOptions": {
+          "thread_ts": "={{ $('💬 Post Email to Slack').first().json.ts }}"
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "CONFIGURE_IN_N8N_UI",
+          "name": "Slack Bot – Tooba Support"
+        }
+      },
+      "notes": "Receives OpenAI error output after 3 failed retries. Posts error in thread under the main Slack message."
+    }
+  ],
+  "connections": {
+    "🔔 Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📧 Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Should Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Should Process": {
+      "main": [
+        [],
+        [
+          {
+            "node": "💬 Post Email to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Post Email to Slack": {
+      "main": [
+        [
+          {
+            "node": "🤖 Build AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Build AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "🌐 Call OpenAI API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 Call OpenAI API": {
+      "main": [
+        [
+          {
+            "node": "🔍 Extract AI Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Slack: OpenAI Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Extract AI Reply": {
+      "main": [
+        [
+          {
+            "node": "🧵 Send AI Reply in Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
