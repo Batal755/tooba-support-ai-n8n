@@ -2,6 +2,46 @@
 
 ---
 
+## [3.0.0] — 2026-05-07
+
+### Final Reply to Slack Thread workflow (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v1.json`  
+**Name:** Tooba Support Final Reply to Slack Thread v1
+
+Complete architecture change — removes OpenAI and Outlook Draft; adds Sent Items monitoring.
+
+**Branch A — Incoming email (4 nodes):**
+- 🔔 Inbox Outlook Trigger — polls Inbox every minute, Raw output
+- 📧 Normalize Incoming Email — exact subject filter (`tooba feedback`), multi-path sender extraction (replyTo → cc → explicit Email: line → embedded → from), extracts requestId, strips technical lines; returns `[]` for invalid emails
+- 💬 Post Request to Slack — card format: `ID обращения / Email / Тема / Сообщение`
+- 🧷 Store Slack Thread Mapping — saves `conversationId → { channelId, threadTs, … }` in `$getWorkflowStaticData('global')`, dedup ring-buffer (500 IDs)
+
+**Branch B — Sent reply (4 nodes):**
+- 📤 Sent Outlook Trigger — polls SentItems every minute, Raw output
+- 📧 Normalize Sent Reply — matches conversationId from staticData, strips quoted reply history via `stripQuotedHistory()`, dedup ring-buffer (500 IDs); returns `[]` if no match or already processed
+- 🔎 Find Slack Thread Mapping — validates channelId / threadTs / sentReplyText before Slack post
+- 🧵 Post Final Reply to Slack Thread — posts in thread via `thread_ts`, format: `✅ Ответ менеджера отправлен / Кому / Текст ответа`
+
+**No OpenAI. No Outlook Draft. No automated email sending.**
+
+**Docs added:**
+- `docs/FINAL_REPLY_THREAD_IMPORT.md` — import guide, credential setup, Sent Items folder note, critical limitation
+- `docs/FINAL_REPLY_THREAD_TEST_PLAN.md` — 7 test cases (TC-01 through TC-07)
+
+---
+
+## [2.1.0] — 2026-05-07
+
+### Slack MVP workflow (new file)
+
+**File:** `n8n/workflow.slack-mvp.fixed.json`  
+**Name:** Tooba Support AI Slack MVP 07.05
+
+Simplified 9-node workflow: Outlook → Normalize → IF skip → Slack card → Build AI Prompt → OpenAI → Extract Reply → Slack thread. No Outlook Draft, no fake FAQ.
+
+---
+
 ## [2.0.0] — 2026-05-06
 
 ### Summary
