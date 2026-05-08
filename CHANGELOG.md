@@ -2,6 +2,29 @@
 
 ---
 
+## [3.1.0] — 2026-05-08 — HOTFIX v4
+
+### outlook_slack_n8n_08.05.26 v4 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v4.json`
+
+**Bug fixed:** Branch A was processing `Re: Tooba Feedback` emails and posting empty cards to Slack (empty sender, empty body). Root cause: subject filter was `includes('tooba feedback')` instead of exact match.
+
+**Fix:** `📧 Normalize Incoming Email` now uses hard-stop `subjectNormalized !== 'tooba feedback'` → `return []`. Any prefix (`Re:`, `Ответить:`, `Fwd:`, `FW:`) causes the entire branch to stop immediately — Slack is never called.
+
+**Other changes vs v1:**
+- `requestId` defaults to `'—'` instead of `''`
+- `cleanBody` strips `OpenAI не сгенерировал…` artifacts from older workflow executions
+- `🧷 Store Slack Thread Mapping` simplified — removed `processedIncomingMessageIds` ring-buffer (not needed since exact-subject filter prevents most duplicates)
+- No IF nodes, no shouldPost flags — pure `return []` pattern throughout
+- Workflow name: `outlook_slack_n8n_08.05.26 v4`
+
+**Docs:**
+- `docs/FINAL_REPLY_THREAD_V4_IMPORT.md`
+- `docs/FINAL_REPLY_THREAD_V4_TEST_PLAN.md` (TC-01 through TC-07)
+
+---
+
 ## [3.0.0] — 2026-05-07
 
 ### Final Reply to Slack Thread workflow (new file)
