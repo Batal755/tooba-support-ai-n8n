@@ -2,6 +2,33 @@
 
 ---
 
+## [3.5.0] — 2026-05-12 — v8 race-condition-safe (Branch B recovery)
+
+### outlook_slack_n8n_08.05.26 v8 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v8.json`
+
+**Problem fixed:** With Outlook Copilot generating draft replies, a manager can send within seconds of the customer email arriving. If Branch B polls SentItems before Branch A processes the new email, the mapping is missing and the manager's reply is lost.
+
+**Fix:** Branch B now has a recovery path. `📧 Normalize Sent Reply` returns `hasMapping: true|false`. A new `🔀 Has Slack Mapping?` IF node routes:
+- TRUE → direct post to existing thread (fast path, identical to v7)
+- FALSE → recovery path: fetch original email from Inbox via Microsoft Graph, post Slack card, store mapping, then post manager's reply in the new thread
+
+**New nodes in Branch B:**
+- `🔀 Has Slack Mapping?` (IF)
+- `🌐 Fetch Original from Graph` (HTTP Request to Graph API)
+- `📧 Recover & Build Card` (Code — normalizes the recovered customer email)
+- `💬 Post Recovery Card to Slack` (Slack)
+- `🧷 Store Recovery Mapping + Merge` (Code — stores mapping and merges sentReplyText)
+
+Both paths converge into the shared `🧵 Post Final Reply to Slack Thread` node.
+
+**Node count:** 15 (was 11 in v7)
+
+Branch A unchanged from v7.
+
+---
+
 ## [3.4.0] — 2026-05-12 — v7 customer follow-up in thread
 
 ### outlook_slack_n8n_08.05.26 v7 (new file)
