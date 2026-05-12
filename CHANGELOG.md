@@ -2,6 +2,30 @@
 
 ---
 
+## [3.2.0] — 2026-05-08 — v5 debug-safe
+
+### outlook_slack_n8n_08.05.26 v5 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v5.json`
+
+**Problem with v4:** When an email was filtered, the execution stopped at `📧 Normalize Incoming Email` (because `return []` stops downstream nodes). There was no way to see **why** an email was filtered in n8n Executions.
+
+**Fix:** `📧 Normalize Incoming Email` now always returns 1 item with `shouldPost: true/false` + `skipReason`. A new `✅ Incoming Should Post?` IF node routes:
+- TRUE → `💬 Post Request to Slack`
+- FALSE → dead end (skipReason visible in execution output)
+
+**Other changes vs v4:**
+- Added `✅ Incoming Should Post?` IF node (9 nodes total, was 8)
+- `stop()` helper function for consistent filtered-output format
+- `skipReason` includes diagnostic data (`from`, `replyTo`, `ccCustomer`, `cleanBodyPreview`) when sender not found
+- Branch B (Sent Reply) identical to v4 — no changes
+
+**Docs:**
+- `docs/FINAL_REPLY_THREAD_V5_IMPORT.md`
+- `docs/FINAL_REPLY_THREAD_V5_TEST_PLAN.md` (TC-01 through TC-08, includes debugging guide)
+
+---
+
 ## [3.1.0] — 2026-05-08 — HOTFIX v4
 
 ### outlook_slack_n8n_08.05.26 v4 (new file)
