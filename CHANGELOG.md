@@ -2,6 +2,32 @@
 
 ---
 
+## [3.3.0] — 2026-05-12 — v6 all-emails
+
+### outlook_slack_n8n_08.05.26 v6 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v6.json`
+
+**Change vs v5:** Removed subject filter — all incoming emails are now processed regardless of subject.
+
+**Removed filters in `📧 Normalize Incoming Email`:**
+- ~~subject does not contain Tooba Feedback~~
+- ~~reply/forward subject ignored (Re:/Fwd:/Ответить:/FW:)~~
+
+**Kept filters:**
+- `own support email ignored` (support@tooba.com)
+- `technical no-reply ignored` (no-reply@mx.tooba.com)
+- `senderEmail not found`
+- `cleanBody too short`
+- `item is draft`
+- `messageId / conversationId missing`
+
+**Result:** Any customer email in Inbox → Slack card. Manager reply in SentItems → Slack thread reply.
+
+Branch B (Sent Reply) identical to v5 — no changes.
+
+---
+
 ## [3.2.0] — 2026-05-08 — v5 debug-safe
 
 ### outlook_slack_n8n_08.05.26 v5 (new file)
