@@ -2,6 +2,22 @@
 
 ---
 
+## [3.6.0] — 2026-05-12 — v9 bugfixes (HTML entities, Inbox-only fetch)
+
+### outlook_slack_n8n_08.05.26 v9 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v9.json`
+
+**Bugs fixed vs v8:**
+
+1. **HTML entities (`&#1084;` etc.)** — `htmlToText` now decodes numeric HTML entities (`&#NNN;` and `&#xHHH;`). Affected all Code nodes with `htmlToText`. Russian text from Outlook Copilot was displaying as `&#1084;&#1086;&#1078;` etc.
+
+2. **Wrong message selected in recovery path** — `🌐 Fetch Original from Graph` changed back to `/me/mailFolders/Inbox/messages` (Inbox-only). Previously used `/me/messages` (all folders) which returned the manager's sent reply in results — recovery code then selected it instead of the customer's original email.
+
+3. **$orderby still removed** — fix from v8 hotfix kept. `/me/mailFolders/Inbox/messages` with `$filter` alone works without `$orderby`.
+
+---
+
 ## [3.5.0] — 2026-05-12 — v8 race-condition-safe (Branch B recovery)
 
 ### outlook_slack_n8n_08.05.26 v8 (new file)
