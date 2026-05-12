@@ -2,6 +2,27 @@
 
 ---
 
+## [3.4.0] — 2026-05-12 — v7 customer follow-up in thread
+
+### outlook_slack_n8n_08.05.26 v7 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v7.json`
+
+**Change vs v6:** Customer follow-up emails (Re: from same conversationId) now appear in the existing Slack thread instead of creating a new top-level card.
+
+**New routing in Branch A:**
+- `📧 Normalize Incoming Email` checks staticData for existing conversationId mapping
+- Sets `isFollowUp: true/false` + `slackThreadTs` / `slackChannelId` when follow-up
+- New `🔀 New or Follow-up?` IF node routes:
+  - TRUE (follow-up) → `📩 Post Follow-up to Slack Thread` (new node, posts in existing thread)
+  - FALSE (new email) → `💬 Post Request to Slack` → `🧷 Store Mapping`
+
+**Node count:** 11 (was 9 in v6)
+
+Branch B (Sent Reply) identical to v5/v6 — no changes.
+
+---
+
 ## [3.3.0] — 2026-05-12 — v6 all-emails
 
 ### outlook_slack_n8n_08.05.26 v6 (new file)
