@@ -279,7 +279,7 @@
       ],
       "parameters": {
         "method": "GET",
-        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "microsoftOutlookOAuth2Api",
         "sendQuery": true,
@@ -288,10 +288,6 @@
             {
               "name": "$filter",
               "value": "=conversationId eq '{{ $json.conversationId }}'"
-            },
-            {
-              "name": "$orderby",
-              "value": "receivedDateTime asc"
             },
             {
               "name": "$top",
