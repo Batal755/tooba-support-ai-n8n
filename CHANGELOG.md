@@ -2,6 +2,29 @@
 
 ---
 
+## [3.7.0] — 2026-05-13 — v10 simplified (no recovery, no duplicates)
+
+### outlook_slack_n8n_08.05.26 v10 (new file)
+
+**File:** `n8n/workflow.final-reply-to-slack-thread.v10.json`
+
+**Problem fixed vs v9:** Recovery path in Branch B caused duplicate Slack cards when there was a race condition between Branch A and Branch B (manager replying within same minute as customer email arrival). The recovery code also picked the wrong message under some conditions, posting cards with empty `Email:` field.
+
+**Fix:** Recovery path removed entirely. Branch B now:
+- Returns `[]` if mapping not found in staticData (silent skip)
+- Posts thread reply only when mapping exists
+
+**Trade-off:** If manager replies within seconds of customer email AND Branch B execution wins the polling race against Branch A, manager's reply is silently skipped. Rare edge case — Outlook Trigger does not re-emit the same message.
+
+**Node count:** 10 (was 15 in v9). Branch A unchanged (7 nodes). Branch B simplified to 3 nodes:
+- 📤 Sent Outlook Trigger
+- 📧 Normalize Sent Reply (returns [] if no mapping)
+- 🧵 Post Final Reply to Slack Thread
+
+HTML entity fix from v9 kept (`&#NNN;` numeric entities decoded).
+
+---
+
 ## [3.6.0] — 2026-05-12 — v9 bugfixes (HTML entities, Inbox-only fetch)
 
 ### outlook_slack_n8n_08.05.26 v9 (new file)
