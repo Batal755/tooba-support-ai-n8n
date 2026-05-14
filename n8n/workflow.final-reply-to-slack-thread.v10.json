@@ -136,7 +136,9 @@
         "channel": "={{ $json.slackChannelId }}",
         "text": "=📩 Клиент написал снова\n\nEmail: {{ $json.senderEmail }}\nТема: {{ $json.subject }}\n\nСообщение:\n{{ $json.cleanBody }}",
         "otherOptions": {
-          "thread_ts": "={{ $json.slackThreadTs }}"
+          "values": {
+            "thread_ts": "={{ $json.slackThreadTs }}"
+          }
         }
       },
       "credentials": {
@@ -180,7 +182,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Store Slack Thread Mapping\n// Saves conversationId → {channelId, threadTs, ...} in staticData.\n\nconst email = $('📧 Normalize Incoming Email').first().json;\nconst slack = $('💬 Post Request to Slack').first().json;\n\nconst channelId = 'C0ATU9ZD2UF';\nconst threadTs  = slack.ts;\n\nif (!email.conversationId || !threadTs) return [];\n\nconst sd = $getWorkflowStaticData('global');\nif (!sd.conversationToSlackThread) sd.conversationToSlackThread = {};\n\nsd.conversationToSlackThread[email.conversationId] = {\n  channelId,\n  threadTs,\n  senderEmail: email.senderEmail,\n  subject:     email.subject,\n  storedAt:    new Date().toISOString(),\n};\n\nreturn [{ json: { ok: true, conversationId: email.conversationId, channelId, threadTs } }];\n"
+        "jsCode": "// Store Slack Thread Mapping\n// Saves conversationId → {channelId, threadTs, ...} in staticData.\n\nconst email = $('📧 Normalize Incoming Email').first().json;\nconst slack = $('💬 Post Request to Slack').first().json;\n\nconst channelId = 'C0ATU9ZD2UF';\nconst threadTs  = slack.message_timestamp;\n\nconsole.log('[Store Mapping] slack keys:', Object.keys(slack).join(', '));\nconsole.log('[Store Mapping] threadTs =', threadTs);\n\nif (!email.conversationId || !threadTs) return [];\n\nconst sd = $getWorkflowStaticData('global');\nif (!sd.conversationToSlackThread) sd.conversationToSlackThread = {};\n\nsd.conversationToSlackThread[email.conversationId] = {\n  channelId,\n  threadTs,\n  senderEmail: email.senderEmail,\n  subject:     email.subject,\n  storedAt:    new Date().toISOString(),\n};\n\nreturn [{ json: { ok: true, conversationId: email.conversationId, channelId, threadTs } }];\n"
       }
     },
     {
@@ -242,7 +244,9 @@
         "channel": "={{ $json.slackChannelId }}",
         "text": "=✅ Менеджер ответил клиенту\n\nКому: {{ $json.toEmails || $json.senderEmail }}\n\nОтвет:\n{{ $json.replyText }}",
         "otherOptions": {
-          "thread_ts": "={{ $json.slackThreadTs }}"
+          "values": {
+            "thread_ts": "={{ $json.slackThreadTs }}"
+          }
         }
       },
       "credentials": {
