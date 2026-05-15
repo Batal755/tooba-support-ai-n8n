@@ -136,8 +136,10 @@
         "channel": "={{ $json.slackChannelId }}",
         "text": "=📩 Клиент написал снова\n\nEmail: {{ $json.senderEmail }}\nТема: {{ $json.subject }}\n\nСообщение:\n{{ $json.cleanBody }}",
         "otherOptions": {
-          "values": {
-            "thread_ts": "={{ $json.slackThreadTs }}"
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.slackThreadTs }}"
+            }
           }
         }
       },
@@ -244,8 +246,10 @@
         "channel": "={{ $json.slackChannelId }}",
         "text": "=✅ Менеджер ответил клиенту\n\nКому: {{ $json.toEmails || $json.senderEmail }}\n\nОтвет:\n{{ $json.replyText }}",
         "otherOptions": {
-          "values": {
-            "thread_ts": "={{ $json.slackThreadTs }}"
+          "thread_ts": {
+            "replyValues": {
+              "thread_ts": "={{ $json.slackThreadTs }}"
+            }
           }
         }
       },
