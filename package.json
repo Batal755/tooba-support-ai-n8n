@@ -8,7 +8,8 @@
   },
   "scripts": {
     "validate": "node scripts/validate-workflow.mjs",
-    "import:n8n": "node scripts/import-to-n8n.mjs"
+    "import:n8n": "node scripts/import-to-n8n.mjs",
+    "server": "node server/index.js"
   },
   "license": "MIT"
 }

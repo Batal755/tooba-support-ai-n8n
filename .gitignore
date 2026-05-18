@@ -72,6 +72,9 @@ web_modules/
 
 # Local secrets — never commit
 .env.local
+server/.env
+server/state.json
+server/state.json.tmp
 secrets/
 *.secret
 *.token

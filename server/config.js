@@ -1,0 +1,52 @@
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+// Minimal .env loader (no dependency). Looks for server/.env then repo .env.local
+function loadEnvFile() {
+  for (const p of [join(here, '.env'), join(here, '..', '.env.local')]) {
+    if (!existsSync(p)) continue;
+    for (const line of readFileSync(p, 'utf8').split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const eq = t.indexOf('=');
+      if (eq === -1) continue;
+      const k = t.slice(0, eq).trim();
+      let v = t.slice(eq + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      if (!(k in process.env)) process.env[k] = v;
+    }
+  }
+}
+loadEnvFile();
+
+function req(name) {
+  const v = process.env[name];
+  if (!v) {
+    console.error(`[config] Missing required env var: ${name}`);
+    process.exit(1);
+  }
+  return v;
+}
+
+export const config = {
+  // Microsoft Graph (Azure app registration, application permissions)
+  graph: {
+    tenantId:     req('MS_TENANT_ID'),
+    clientId:     req('MS_CLIENT_ID'),
+    clientSecret: req('MS_CLIENT_SECRET'),
+    mailbox:      req('MS_MAILBOX'), // e.g. support@tooba.com
+  },
+  slack: {
+    token:     req('SLACK_BOT_TOKEN'),   // xoxb-...
+    channelId: req('SLACK_CHANNEL_ID'),  // C0ATU9ZD2UF
+  },
+  ownDomains: (process.env.OWN_DOMAINS || '@tooba.com,@mx.tooba.com')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+  pollSeconds: Number(process.env.POLL_SECONDS || 30),
+  storePath:   process.env.STORE_PATH || join(here, 'state.json'),
+};
