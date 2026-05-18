@@ -8,6 +8,10 @@ export async function postMessage({ text, threadTs }) {
     text,
     unfurl_links: false,
     unfurl_media: false,
+    // Custom username + icon makes Slack render each message with its
+    // own header instead of grouping consecutive bot messages.
+    username: config.slack.username,
+    icon_emoji: config.slack.iconEmoji,
   };
   if (threadTs) payload.thread_ts = threadTs;
 

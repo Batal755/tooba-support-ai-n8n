@@ -41,8 +41,10 @@ export const config = {
     mailbox:      req('MS_MAILBOX'), // signed-in mailbox, e.g. support@tooba.com
   },
   slack: {
-    token:     req('SLACK_BOT_TOKEN'),   // xoxb-...
-    channelId: req('SLACK_CHANNEL_ID'),  // C0ATU9ZD2UF
+    token:      req('SLACK_BOT_TOKEN'),   // xoxb-...
+    channelId:  req('SLACK_CHANNEL_ID'),  // C0ATU9ZD2UF
+    username:   process.env.SLACK_USERNAME || 'Tooba-bridge',
+    iconEmoji:  process.env.SLACK_ICON_EMOJI || ':envelope_with_arrow:',
   },
   ownDomains: (process.env.OWN_DOMAINS || '@tooba.com,@mx.tooba.com')
     .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
