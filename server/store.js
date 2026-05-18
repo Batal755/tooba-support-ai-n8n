@@ -9,6 +9,7 @@ const DEFAULT = {
   processedSent: [],        // sent message ids already mirrored (dedup)
   lastInboxSync: null,      // ISO timestamp
   lastSentSync: null,
+  msRefreshToken: null,     // delegated auth refresh token
 };
 
 let state = structuredClone(DEFAULT);
@@ -52,3 +53,6 @@ export const markSent   = (id) => { markRing(state.processedSent, id); save(); }
 export function getState() { return state; }
 export function setLastInboxSync(ts) { state.lastInboxSync = ts; save(); }
 export function setLastSentSync(ts)  { state.lastSentSync  = ts; save(); }
+
+export const getRefreshToken = () => state.msRefreshToken;
+export function setRefreshToken(t) { state.msRefreshToken = t; save(); }

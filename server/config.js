@@ -38,8 +38,7 @@ export const config = {
   graph: {
     tenantId:     req('MS_TENANT_ID'),
     clientId:     req('MS_CLIENT_ID'),
-    clientSecret: req('MS_CLIENT_SECRET'),
-    mailbox:      req('MS_MAILBOX'), // e.g. support@tooba.com
+    mailbox:      req('MS_MAILBOX'), // signed-in mailbox, e.g. support@tooba.com
   },
   slack: {
     token:     req('SLACK_BOT_TOKEN'),   // xoxb-...

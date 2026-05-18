@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { fetchMessages } from './graph.js';
+import { fetchMessages, ensureAuth } from './graph.js';
 import { postMessage } from './slack.js';
 import { normalizeIncoming, normalizeSent } from './normalize.js';
 import {
@@ -81,6 +81,7 @@ async function main() {
   load();
   log(`Tooba support bridge starting — mailbox=${config.graph.mailbox} ` +
       `channel=${config.slack.channelId} poll=${config.pollSeconds}s`);
+  await ensureAuth();
   await tick();
   setInterval(tick, config.pollSeconds * 1000);
 }
