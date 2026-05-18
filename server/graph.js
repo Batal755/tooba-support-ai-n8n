@@ -14,8 +14,29 @@ let tokenExpiry = 0;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Retry fetch up to 4 times with exponential backoff (2s, 4s, 8s, 16s).
+// Retries on network errors (fetch failed) and 5xx responses.
+async function fetchWithRetry(url, opts = {}, attempt = 0) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000), ...opts });
+    if (res.status >= 500 && attempt < 4) {
+      await sleep(2 ** attempt * 2000);
+      return fetchWithRetry(url, opts, attempt + 1);
+    }
+    return res;
+  } catch (err) {
+    if (attempt < 4) {
+      const delay = 2 ** attempt * 2000;
+      console.error(`[graph] fetch error (attempt ${attempt + 1}/4), retry in ${delay / 1000}s:`, err.message);
+      await sleep(delay);
+      return fetchWithRetry(url, opts, attempt + 1);
+    }
+    throw err;
+  }
+}
+
 async function deviceCodeLogin() {
-  const res = await fetch(`${authBase}/devicecode`, {
+  const res = await fetchWithRetry(`${authBase}/devicecode`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: config.graph.clientId, scope: SCOPE }),
@@ -35,7 +56,7 @@ async function deviceCodeLogin() {
 
   while (Date.now() < deadline) {
     await sleep(interval);
-    const t = await fetch(`${authBase}/token`, {
+    const t = await fetchWithRetry(`${authBase}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -62,7 +83,7 @@ async function deviceCodeLogin() {
 async function refresh() {
   const rt = getRefreshToken();
   if (!rt) return false;
-  const res = await fetch(`${authBase}/token`, {
+  const res = await fetchWithRetry(`${authBase}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -92,7 +113,7 @@ async function getToken() {
 
 async function graphGet(path) {
   const token = await getToken();
-  const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+  const res = await fetchWithRetry(`https://graph.microsoft.com/v1.0${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`Graph GET ${path} -> ${res.status}: ${await res.text()}`);
@@ -115,7 +136,7 @@ export async function fetchMessages(folder, sinceIso, top = 25) {
 
 export async function sendMail({ to, subject, html }) {
   const token = await getToken();
-  const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+  const res = await fetchWithRetry('https://graph.microsoft.com/v1.0/me/sendMail', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
