@@ -43,7 +43,7 @@ export const config = {
   slack: {
     token:      req('SLACK_BOT_TOKEN'),   // xoxb-...
     channelId:  req('SLACK_CHANNEL_ID'),  // C0ATU9ZD2UF
-    username:   process.env.SLACK_USERNAME || 'Tooba-bridge',
+    username:   process.env.SLACK_USERNAME || 'Tooba Support',
     iconEmoji:  process.env.SLACK_ICON_EMOJI || ':envelope_with_arrow:',
   },
   ownDomains: (process.env.OWN_DOMAINS || '@tooba.com,@mx.tooba.com')

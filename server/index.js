@@ -29,12 +29,12 @@ async function processInbox() {
     if (existing) {
       await postMessage({
         threadTs: existing.threadTs,
-        text: `*Клиент написал снова*\n*Email:* ${n.senderEmail}\n*Тема:* ${n.subject}\n\n${n.body}`,
+        text: `*Клиент написал снова*\n*Email:* ${n.senderEmail}\n\n${n.body}`,
       });
       log('inbox follow-up posted to thread', existing.threadTs);
     } else {
       const ts = await postMessage({
-        text: `*Новое письмо от клиента*\n*Email:* ${n.senderEmail}\n*Тема:* ${n.subject}\n\n${n.body}`,
+        text: `*Новое письмо от клиента*\n*Email:* ${n.senderEmail}\n\n${n.body}`,
       });
       setThread(n.conversationId, {
         threadTs: ts,
