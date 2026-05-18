@@ -1,0 +1,358 @@
+{
+  "name": "outlook_slack_n8n_08.05.26 v.4 CLAUDE CODE",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {},
+        "options": {
+          "output": "raw"
+        }
+      },
+      "id": "a3677933-2447-417b-947e-89b0c731ae53",
+      "name": "🔔 Inbox Outlook Trigger",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        7168,
+        5840
+      ],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ZHNm6bb420uss2Fs",
+          "name": "Microsoft Outlook account 06.05.26"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nfunction addr(obj) {\n  const o = obj?.emailAddress || obj || {};\n  return {\n    name: String(o.name || o.displayName || '').trim(),\n    address: String(o.address || o.email || o.emailAddress || '').toLowerCase().trim(),\n  };\n}\n\nfunction htmlToText(raw) {\n  if (!raw) return '';\n  return String(raw)\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<\\/div>/gi, '\\n')\n    .replace(/<\\/li>/gi, '\\n')\n    .replace(/<\\/tr>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/&#(\\d+);/g, (_, n) => String.fromCharCode(+n))\n    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))\n    .replace(/\\r/g, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\nfunction stripQuotes(text) {\n  if (!text) return '';\n  const cuts = [\n    /\\n-{2,}\\s*Original Message\\s*-{2,}/i,\n    /\\nОт:\\s/i,\n    /\\nFrom:\\s/i,\n    /\\nOn .+wrote:/i,\n    /\\n.*написал\\(а\\):/i,\n    /\\n_{10,}/,\n  ];\n  let cut = -1;\n  for (const rx of cuts) {\n    const m = rx.exec(text);\n    if (m && (cut === -1 || m.index < cut)) cut = m.index;\n  }\n  return cut >= 0 ? text.slice(0, cut).trim() : text.trim();\n}\n\nfunction stop(reason, extra = {}) {\n  return [{ json: {\n    shouldPost: false,\n    skipReason: reason,\n    isFollowUp: false,\n    senderEmail: '',\n    subject: String(item.subject || ''),\n    cleanBody: '',\n    messageId: item.id || null,\n    conversationId: item.conversationId || null,\n    ...extra\n  }}];\n}\n\nconst messageId      = item.id || null;\nconst conversationId = item.conversationId || null;\nconst subject        = String(item.subject || '').trim();\n\nif (!messageId)      return stop('messageId missing');\nif (!conversationId) return stop('conversationId missing');\nif (item.isDraft)    return stop('draft ignored');\n\nconst raw = item.body?.content || item.bodyPreview || '';\nlet body = stripQuotes(htmlToText(raw));\n\nconst explicitEmail = (body.match(/Email\\s*[:：]\\s*([^\\s<>]+@[^\\s<>]+)/i) || [])[1]?.toLowerCase().trim() || '';\nconst embeddedEmail = (body.match(/Отправлено от\\s+([^\\s<>]+@[^\\s<>]+)/i) || [])[1]?.toLowerCase().trim() || '';\n\n// Fallback: any external email found anywhere in the body\nconst bodyEmails = (body.match(/\\b[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}\\b/g) || []);\nconst bodyEmail = bodyEmails.find(e => {\n  const l = e.toLowerCase();\n  return !l.includes('@tooba.com') && !l.includes('@mx.tooba.com');\n})?.toLowerCase() || '';\n\nbody = body\n  .replace(/\\n?\\s*Отправлено от\\s+[^\\s<>]+@[^\\s<>]+/gi, '')\n  .replace(/^\\s*(ID\\s*(обращения)?\\s*[:：]\\s*\\d+)\\s*$/gim, '')\n  .replace(/^\\s*Email\\s*[:：]\\s*[^\\s<>]+@[^\\s<>]+\\s*$/gim, '')\n  .replace(/^\\s*Сообщение\\s*[:：]\\s*/gim, '')\n  .replace(/Получите Outlook для .+$/gim, '')\n  .replace(/Outlook:\\s*https?:\\/\\/\\S+/gi, '')\n  .trim();\n\nconst from    = addr(item.from);\nconst sender  = addr(item.sender);\nconst replyTo = Array.isArray(item.replyTo) && item.replyTo.length ? addr(item.replyTo[0]) : { name: '', address: '' };\nconst ccExt   = (Array.isArray(item.ccRecipients) ? item.ccRecipients : [])\n  .map(addr)\n  .find(e => e.address && !e.address.includes('@tooba.com') && !e.address.includes('@mx.tooba.com'));\n\nconst customer = replyTo.address                                                           ? replyTo\n  : ccExt?.address                                                                         ? ccExt\n  : explicitEmail                                                                          ? { name: explicitEmail, address: explicitEmail }\n  : embeddedEmail                                                                          ? { name: embeddedEmail, address: embeddedEmail }\n  : (from.address && !from.address.includes('@tooba.com') && !from.address.includes('@mx.tooba.com')) ? from\n  : (sender.address && !sender.address.includes('@tooba.com') && !sender.address.includes('@mx.tooba.com')) ? sender\n  : bodyEmail                                                                              ? { name: bodyEmail, address: bodyEmail }\n  : from;\n\nconst senderEmail = customer.address || '';\nconst senderName  = (customer.name && customer.name.toLowerCase() !== senderEmail) ? customer.name : senderEmail;\n\nif (!senderEmail)                              return stop('senderEmail not found', { from, sender, replyTo, ccExt, bodyEmail });\nif (senderEmail.includes('support@tooba.com')) return stop('own support email ignored');\nif (senderEmail.includes('@mx.tooba.com'))     return stop('relay no-reply, real customer not found', { replyTo, ccExt, bodyEmail });\nif (!body || body.length < 3)                  return stop('body too short');\n\nconst sd = $getWorkflowStaticData('global');\nconst mapping = sd.conversationToSlackThread?.[conversationId];\nconst isFollowUp = !!mapping;\n\nreturn [{ json: {\n  shouldPost:     true,\n  skipReason:     '',\n  isFollowUp,\n  senderEmail,\n  senderName,\n  subject,\n  cleanBody:      body,\n  messageId,\n  conversationId,\n  slackChannelId: mapping?.channelId  || null,\n  slackThreadTs:  mapping?.threadTs   || null,\n  receivedAt:     item.receivedDateTime || null,\n}}];\n"
+      },
+      "id": "b7618e92-e19e-4d72-8f85-d282a66361be",
+      "name": "📧 Normalize Incoming Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7376,
+        5840
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.shouldPost }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1080ab9f-1342-4f52-afbd-ee3b34cab1f1",
+      "name": "✅ Should Post?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        7616,
+        5840
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.isFollowUp }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0068122b-ff1e-44d2-a54e-b236fc35d7ee",
+      "name": "🔀 New or Follow-up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        7808,
+        5664
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0ATU9ZD2UF",
+          "mode": "list",
+          "cachedResultName": "support_ai_test"
+        },
+        "text": "=📩 Клиент написал снова\n\nEmail: {{ $json.senderEmail }}\nТема: {{ $json.subject }}\n\nСообщение:\n{{ $json.cleanBody }}",
+        "otherOptions": {
+          "thread_ts": "={{ $json.slackThreadTs }}"
+        }
+      },
+      "id": "0c2479a0-90e7-433d-bb09-53728530555a",
+      "name": "📩 Post Follow-up to Thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        8192,
+        5536
+      ],
+      "webhookId": "be4b1291-8654-4114-a51c-e31dde584e13",
+      "credentials": {
+        "slackApi": {
+          "id": "o0VX6ompp8CZRDy2",
+          "name": "Slack account 06.05.26"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0ATU9ZD2UF",
+          "mode": "list",
+          "cachedResultName": "support_ai_test"
+        },
+        "text": "=📬 Новое письмо от клиента\n\nEmail: {{ $json.senderEmail }}\nТема: {{ $json.subject }}\n\nСообщение:\n{{ $json.cleanBody }}",
+        "otherOptions": {}
+      },
+      "id": "693a1d88-a119-4472-8bf2-b8c5302b5d24",
+      "name": "💬 Post Request to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        8192,
+        5952
+      ],
+      "webhookId": "b0edfb32-f4bd-4278-9ec1-bfbd5d3e2460",
+      "credentials": {
+        "slackApi": {
+          "id": "o0VX6ompp8CZRDy2",
+          "name": "Slack account 06.05.26"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $('📧 Normalize Incoming Email').first().json;\nconst slack = $('💬 Post Request to Slack').first().json;\n\nconst channelId = 'C0ATU9ZD2UF';\nconst threadTs  = slack.ts || slack.message?.ts || slack.message_timestamp || slack.message_ts;\n\nconsole.log('[Store Mapping] slack keys:', Object.keys(slack).join(', '));\nconsole.log('[Store Mapping] threadTs =', threadTs);\n\nif (!email.conversationId || !threadTs) {\n  console.log('[Store Mapping] SKIP — missing conversationId or threadTs');\n  return [];\n}\n\nconst sd = $getWorkflowStaticData('global');\nif (!sd.conversationToSlackThread) sd.conversationToSlackThread = {};\n\nsd.conversationToSlackThread[email.conversationId] = {\n  channelId,\n  threadTs,\n  senderEmail: email.senderEmail,\n  subject:     email.subject,\n  storedAt:    new Date().toISOString(),\n};\n\nreturn [{ json: { ok: true, conversationId: email.conversationId, channelId, threadTs } }];\n"
+      },
+      "id": "604af243-9f3f-4857-8619-c6a801b19ee3",
+      "name": "🧷 Store Slack Thread Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8464,
+        5952
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {},
+        "options": {
+          "output": "raw"
+        }
+      },
+      "id": "71e0a80d-4b18-4fa3-8ad0-07fb67704c78",
+      "name": "📤 Sent Outlook Trigger",
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        7168,
+        6192
+      ],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ZHNm6bb420uss2Fs",
+          "name": "Microsoft Outlook account 06.05.26"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nfunction addr(obj) {\n  const o = obj?.emailAddress || obj || {};\n  return {\n    name: String(o.name || o.displayName || '').trim(),\n    address: String(o.address || o.email || o.emailAddress || '').toLowerCase().trim(),\n  };\n}\n\nfunction htmlToText(raw) {\n  if (!raw) return '';\n  return String(raw)\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<\\/div>/gi, '\\n')\n    .replace(/<\\/li>/gi, '\\n')\n    .replace(/<\\/tr>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/&#(\\d+);/g, (_, n) => String.fromCharCode(+n))\n    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))\n    .replace(/\\r/g, '')\n    .replace(/[ \\t]+\\n/g, '\\n')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\nfunction stripQuotes(text) {\n  if (!text) return '';\n  const cuts = [\n    /\\n-{2,}\\s*Original Message\\s*-{2,}/i,\n    /\\nОт:\\s/i,\n    /\\nFrom:\\s/i,\n    /\\nOn .+wrote:/i,\n    /\\n.*написал\\(а\\):/i,\n    /\\n_{10,}/,\n  ];\n  let cut = -1;\n  for (const rx of cuts) {\n    const m = rx.exec(text);\n    if (m && (cut === -1 || m.index < cut)) cut = m.index;\n  }\n  return cut >= 0 ? text.slice(0, cut).trim() : text.trim();\n}\n\nconst messageId      = item.id || null;\nconst conversationId = item.conversationId || null;\n\nif (!messageId || !conversationId) return [];\nif (item.isDraft) return [];\n\nconst sd = $getWorkflowStaticData('global');\nconst mapping = sd.conversationToSlackThread?.[conversationId];\nif (!mapping) return [];\n\nif (!sd.processedSentIds) sd.processedSentIds = [];\nif (sd.processedSentIds.includes(messageId)) return [];\n\nconst toList = (Array.isArray(item.toRecipients) ? item.toRecipients : [])\n  .map(addr).filter(e => e.address).map(e => e.address).join(', ');\n\nconst raw = item.body?.content || item.bodyPreview || '';\nlet replyText = stripQuotes(htmlToText(raw));\nreplyText = replyText.replace(/^\\s*Получите Outlook для .+$/gim, '').trim();\n\nif (!replyText || replyText.length < 2) return [];\n\nsd.processedSentIds.push(messageId);\nif (sd.processedSentIds.length > 500) sd.processedSentIds = sd.processedSentIds.slice(-500);\n\nreturn [{ json: {\n  messageId,\n  conversationId,\n  toEmails:       toList,\n  replyText,\n  slackChannelId: mapping.channelId,\n  slackThreadTs:  mapping.threadTs,\n  senderEmail:    mapping.senderEmail,\n} }];\n"
+      },
+      "id": "fd630c80-c0a7-4af2-bf78-35546e997f84",
+      "name": "📧 Normalize Sent Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7392,
+        6192
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0ATU9ZD2UF",
+          "mode": "list",
+          "cachedResultName": "support_ai_test"
+        },
+        "text": "=✅ Менеджер ответил клиенту\n\nКому: {{ $json.toEmails || $json.senderEmail }}\n\nОтвет:\n{{ $json.replyText }}",
+        "otherOptions": {
+          "thread_ts": "={{ $json.slackThreadTs }}"
+        }
+      },
+      "id": "79abc134-f4c3-4ee5-b89b-aa8259c471d1",
+      "name": "🧵 Post Reply to Slack Thread",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [
+        7616,
+        6192
+      ],
+      "webhookId": "8b171b97-3a73-44ad-b9fd-8aeeeccd811d",
+      "credentials": {
+        "slackApi": {
+          "id": "o0VX6ompp8CZRDy2",
+          "name": "Slack account 06.05.26"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "🔔 Inbox Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📧 Normalize Incoming Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Normalize Incoming Email": {
+      "main": [
+        [
+          {
+            "node": "✅ Should Post?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Should Post?": {
+      "main": [
+        [
+          {
+            "node": "🔀 New or Follow-up?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 New or Follow-up?": {
+      "main": [
+        [
+          {
+            "node": "📩 Post Follow-up to Thread",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "💬 Post Request to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Post Request to Slack": {
+      "main": [
+        [
+          {
+            "node": "🧷 Store Slack Thread Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Sent Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "📧 Normalize Sent Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Normalize Sent Reply": {
+      "main": [
+        [
+          {
+            "node": "🧵 Post Reply to Slack Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "62888334-0342-445c-9c06-45b9b4353c74",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7ae004860c65a61b4ff19ddb1d4dcc125026c71b5506fc31795917fe587d0442"
+  },
+  "id": "b0U5pRAlNbGmkFZr",
+  "tags": []
+}
