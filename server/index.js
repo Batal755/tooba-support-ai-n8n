@@ -29,12 +29,12 @@ async function processInbox() {
     if (existing) {
       await postMessage({
         threadTs: existing.threadTs,
-        text: `*Клиент написал снова*\n*Email:* ${n.senderEmail}\n\n${n.body}`,
+        text: `*Email:* ${n.senderEmail}\n\n${n.body}`,
       });
       log('inbox follow-up posted to thread', existing.threadTs);
     } else {
       const ts = await postMessage({
-        text: `*Новое письмо от клиента*\n*Email:* ${n.senderEmail}\n\n${n.body}`,
+        text: `*Email:* ${n.senderEmail}\n\n${n.body}`,
       });
       setThread(n.conversationId, {
         threadTs: ts,
@@ -64,7 +64,7 @@ async function processSent() {
 
     await postMessage({
       threadTs: mapping.threadTs,
-      text: `*Менеджер ответил клиенту*\n*Кому:* ${n.toEmails || mapping.senderEmail}\n\n${n.replyText}`,
+      text: `*Кому:* ${n.toEmails || mapping.senderEmail}\n\n${n.replyText}`,
     });
     log('sent reply mirrored to thread', mapping.threadTs);
     markSent(raw.id);
