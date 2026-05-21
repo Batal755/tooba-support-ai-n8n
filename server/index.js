@@ -78,9 +78,19 @@ async function processSent() {
   setLastSentSync(new Date(Date.now() - 60_000).toISOString());
 }
 
+let ticking = false;
+
 async function tick() {
-  try { await processInbox(); } catch (e) { log('inbox error:', e.message); }
-  try { await processSent(); }  catch (e) { log('sent error:', e.message); }
+  // Prevent overlapping runs: a slow tick (e.g. network retries) must not
+  // let the next interval fire concurrently — that re-posts unmarked mail.
+  if (ticking) { log('tick skipped — previous run still in progress'); return; }
+  ticking = true;
+  try {
+    try { await processInbox(); } catch (e) { log('inbox error:', e.message); }
+    try { await processSent(); }  catch (e) { log('sent error:', e.message); }
+  } finally {
+    ticking = false;
+  }
 }
 
 async function main() {
