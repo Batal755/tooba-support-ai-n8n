@@ -12,5 +12,8 @@
     "server": "node server/index.js",
     "reset": "node server/reset.js"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "html-to-text": "^9.0.5"
+  }
 }

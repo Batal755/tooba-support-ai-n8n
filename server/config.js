@@ -49,5 +49,10 @@ export const config = {
   ownDomains: (process.env.OWN_DOMAINS || '@tooba.com,@mx.tooba.com')
     .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
   pollSeconds: Number(process.env.POLL_SECONDS || 30),
+  // Group emails from the same customer into one Slack thread when they arrive
+  // within this many days of the last activity, even if Outlook gave them a
+  // new conversationId (new subject). 0 disables grouping (one thread per
+  // conversationId — the original behaviour).
+  threadGroupDays: Number(process.env.THREAD_GROUP_DAYS ?? 7),
   storePath:   process.env.STORE_PATH || join(here, 'state.json'),
 };

@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { convert } from 'html-to-text';
 
 const isOwn = (email) =>
   config.ownDomains.some(d => email.includes(d));
@@ -11,25 +12,23 @@ function addr(obj) {
   };
 }
 
+// HTML → plain text via the `html-to-text` library: it parses a real DOM tree
+// (not regex), so it survives Outlook's table-based layout, nested tags,
+// conditional [if mso] comments and HTML entities far more reliably.
+// Links render as their visible text (href dropped), images are skipped,
+// tables are flattened row-by-row. Plain-text bodies pass through unchanged.
+const HTML_TO_TEXT_OPTS = {
+  wordwrap: false, // keep original line breaks — email-extraction regexes are line-based
+  selectors: [
+    { selector: 'a', options: { ignoreHref: true } },
+    { selector: 'img', format: 'skip' },
+    { selector: 'table', format: 'dataTable' },
+  ],
+};
+
 export function htmlToText(raw) {
   if (!raw) return '';
-  return String(raw)
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<\/tr>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+  return convert(String(raw), HTML_TO_TEXT_OPTS)
     .replace(/\r/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

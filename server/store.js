@@ -36,8 +36,34 @@ export function getThread(conversationId) {
 }
 
 export function setThread(conversationId, data) {
-  state.conversationToThread[conversationId] = { ...data, storedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  state.conversationToThread[conversationId] = { ...data, storedAt: now, lastActivityAt: now };
   save();
+}
+
+// Bump the activity timestamp so the email-grouping window slides forward
+// each time a conversation sees new traffic.
+export function touchThread(conversationId) {
+  const t = state.conversationToThread[conversationId];
+  if (t) { t.lastActivityAt = new Date().toISOString(); save(); }
+}
+
+// Find the most recently active thread for a customer email, optionally
+// limited to threads active within `withinMs`. Used as a fallback when a
+// new email has a conversationId we have never seen (e.g. the customer
+// started a fresh subject instead of replying).
+export function findThreadByEmail(email, withinMs) {
+  if (!email) return null;
+  const target = email.toLowerCase();
+  const cutoff = withinMs ? Date.now() - withinMs : 0;
+  let best = null;
+  for (const t of Object.values(state.conversationToThread)) {
+    if ((t.senderEmail || '').toLowerCase() !== target) continue;
+    const ts = Date.parse(t.lastActivityAt || t.storedAt || '') || 0;
+    if (ts < cutoff) continue;
+    if (!best || ts > (Date.parse(best.lastActivityAt || best.storedAt || '') || 0)) best = t;
+  }
+  return best;
 }
 
 function markRing(arr, id, max = 1000) {

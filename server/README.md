@@ -1,7 +1,8 @@
 # Tooba Support Bridge (standalone server)
 
-Replaces the n8n workflow. Pure Node.js, **zero npm dependencies**
-(native `fetch` + JSON file state). Requires Node 18+.
+Replaces the n8n workflow. Pure Node.js, **one dependency**
+(`html-to-text` for robust HTML→text; everything else uses native `fetch` +
+JSON file state). Requires Node 18+. Run `npm install` once before first start.
 
 ## What it does
 
@@ -35,6 +36,7 @@ State (thread map + dedup) lives in `server/state.json`.
 ### 3. Config
 
 ```bash
+npm install                     # installs html-to-text
 cp server/.env.example server/.env
 # edit server/.env with the values above
 ```

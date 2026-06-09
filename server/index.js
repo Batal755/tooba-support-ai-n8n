@@ -3,7 +3,7 @@ import { fetchMessages, ensureAuth } from './graph.js';
 import { postMessage } from './slack.js';
 import { normalizeIncoming, normalizeSent } from './normalize.js';
 import {
-  load, getThread, setThread,
+  load, getThread, setThread, touchThread, findThreadByEmail,
   inboxSeen, sentSeen, markInbox, markSent,
   getState, setLastInboxSync, setLastSentSync,
 } from './store.js';
@@ -25,16 +25,36 @@ async function processInbox() {
       continue;
     }
 
-    const existing = getThread(n.conversationId);
-    if (existing) {
+    // 1. Direct match: this conversationId already has a thread.
+    let mapping = getThread(n.conversationId);
+
+    // 2. Fallback: no thread for this conversationId, but the same customer
+    //    has a recent thread (they started a new subject). Reuse it and link
+    //    this conversationId so future messages map directly.
+    if (!mapping && config.threadGroupDays > 0) {
+      const byEmail = findThreadByEmail(n.senderEmail, config.threadGroupDays * 86_400_000);
+      if (byEmail) {
+        setThread(n.conversationId, {
+          threadTs: byEmail.threadTs,
+          channelId: byEmail.channelId,
+          senderEmail: n.senderEmail,
+          subject: n.subject,
+        });
+        mapping = getThread(n.conversationId);
+        log('inbox: linked new conversation to existing thread by email', byEmail.threadTs);
+      }
+    }
+
+    if (mapping) {
       await postMessage({
-        threadTs: existing.threadTs,
-        text: `*Клиент написал снова*\n*Email:* ${n.senderEmail}\n\n${n.body}`,
+        threadTs: mapping.threadTs,
+        text: `*Клиент написал снова*\n*Email:* ${n.senderEmail}\n*Тема:* ${n.subject}\n\n${n.body}`,
       });
-      log('inbox follow-up posted to thread', existing.threadTs);
+      touchThread(n.conversationId);
+      log('inbox follow-up posted to thread', mapping.threadTs);
     } else {
       const ts = await postMessage({
-        text: `*Новое письмо от клиента*\n*Email:* ${n.senderEmail}\n\n${n.body}`,
+        text: `*Новое письмо от клиента*\n*Email:* ${n.senderEmail}\n*Тема:* ${n.subject}\n\n${n.body}`,
       });
       setThread(n.conversationId, {
         threadTs: ts,
@@ -66,6 +86,7 @@ async function processSent() {
       threadTs: mapping.threadTs,
       text: `*Менеджер ответил клиенту*\n*Кому:* ${n.toEmails || mapping.senderEmail}\n\n${n.replyText}`,
     });
+    touchThread(n.conversationId);
     log('sent reply mirrored to thread', mapping.threadTs);
     markSent(raw.id);
   }
