@@ -55,9 +55,22 @@ npx pm2 start server/index.js --name tooba-bridge
 npx pm2 save
 ```
 
+## Tests
+
+```bash
+npm test          # node --test server/ — normalize + store unit tests
+```
+
 ## Notes
 
-- First run processes recent inbox messages, then only new ones.
+- First run only looks back `COLD_START_HOURS` (default 1h), then only new
+  messages — no backlog dump into Slack.
+- Each fetch follows `@odata.nextLink`, so a busy window isn't truncated at one
+  page (capped by an internal `maxPages` safety limit).
+- Dedup of processed message ids is time-based (`DEDUP_RETENTION_HOURS`), not a
+  fixed count cap — a large burst can't evict an id that could be re-fetched.
+- Inactive `conversationId → thread` mappings are pruned after
+  `THREAD_RETENTION_DAYS` (default 90) so `state.json` stays bounded.
 - `state.json` is the source of truth — back it up; deleting it resets all
   thread mappings (new emails would start fresh threads).
 - All sender resolution logic (relay handling, body-embedded customer email,

@@ -5,8 +5,8 @@ import { config } from './config.js';
 // plus dedup sets for processed inbox/sent message ids.
 const DEFAULT = {
   conversationToThread: {}, // conversationId -> { threadTs, channelId, senderEmail, subject, storedAt }
-  processedInbox: [],       // message ids already posted (dedup)
-  processedSent: [],        // sent message ids already mirrored (dedup)
+  processedInbox: {},       // message id -> processedAt(ms)  (dedup, time-pruned)
+  processedSent: {},        // sent message id -> processedAt(ms)
   lastInboxSync: null,      // ISO timestamp
   lastSentSync: null,
   msRefreshToken: null,     // delegated auth refresh token
@@ -14,10 +14,22 @@ const DEFAULT = {
 
 let state = structuredClone(DEFAULT);
 
+// Old versions stored dedup as a flat array of ids capped at 1000. Convert any
+// such array into the id->timestamp map so upgrades don't lose dedup state.
+function migrateDedup(v) {
+  if (Array.isArray(v)) {
+    const now = Date.now();
+    return Object.fromEntries(v.map(id => [id, now]));
+  }
+  return v && typeof v === 'object' ? v : {};
+}
+
 export function load() {
   if (existsSync(config.storePath)) {
     try {
       state = { ...structuredClone(DEFAULT), ...JSON.parse(readFileSync(config.storePath, 'utf8')) };
+      state.processedInbox = migrateDedup(state.processedInbox);
+      state.processedSent  = migrateDedup(state.processedSent);
     } catch (e) {
       console.error('[store] corrupt state file, starting fresh:', e.message);
     }
@@ -66,15 +78,33 @@ export function findThreadByEmail(email, withinMs) {
   return best;
 }
 
-function markRing(arr, id, max = 1000) {
-  arr.push(id);
-  if (arr.length > max) arr.splice(0, arr.length - max);
+// Record an id as processed and prune entries older than the dedup retention
+// horizon. Time-based (not a fixed count cap), so a burst of >1000 messages in
+// one tick can never evict an id that could still be re-fetched.
+function markDedup(map, id) {
+  const now = Date.now();
+  map[id] = now;
+  const cutoff = now - config.dedupRetentionHours * 3_600_000;
+  for (const k in map) if (map[k] < cutoff) delete map[k];
 }
 
-export const inboxSeen  = (id) => state.processedInbox.includes(id);
-export const sentSeen   = (id) => state.processedSent.includes(id);
-export const markInbox  = (id) => { markRing(state.processedInbox, id); save(); };
-export const markSent   = (id) => { markRing(state.processedSent, id); save(); };
+export const inboxSeen  = (id) => id in state.processedInbox;
+export const sentSeen   = (id) => id in state.processedSent;
+export const markInbox  = (id) => { markDedup(state.processedInbox, id); save(); };
+export const markSent   = (id) => { markDedup(state.processedSent, id); save(); };
+
+// Drop conversation→thread mappings inactive for longer than retentionMs.
+// Keeps state.json bounded over time. Returns how many were removed.
+export function pruneThreads(retentionMs) {
+  const cutoff = Date.now() - retentionMs;
+  let removed = 0;
+  for (const [cid, t] of Object.entries(state.conversationToThread)) {
+    const ts = Date.parse(t.lastActivityAt || t.storedAt || '') || 0;
+    if (ts && ts < cutoff) { delete state.conversationToThread[cid]; removed++; }
+  }
+  if (removed) save();
+  return removed;
+}
 
 export function getState() { return state; }
 export function setLastInboxSync(ts) { state.lastInboxSync = ts; save(); }

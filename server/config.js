@@ -54,5 +54,14 @@ export const config = {
   // new conversationId (new subject). 0 disables grouping (one thread per
   // conversationId — the original behaviour).
   threadGroupDays: Number(process.env.THREAD_GROUP_DAYS ?? 7),
+  // Cold start: on the very first run (no saved cursor) only look back this
+  // many hours, so we don't dump old mail into Slack.
+  coldStartHours: Number(process.env.COLD_START_HOURS ?? 1),
+  // How long to remember processed message ids for dedup. Only needs to exceed
+  // the fetch overlap window; 24h is a very safe default.
+  dedupRetentionHours: Number(process.env.DEDUP_RETENTION_HOURS ?? 24),
+  // Drop conversation→thread mappings with no activity for this many days,
+  // keeping state.json bounded. Should exceed threadGroupDays.
+  threadRetentionDays: Number(process.env.THREAD_RETENTION_DAYS ?? 90),
   storePath:   process.env.STORE_PATH || join(here, 'state.json'),
 };

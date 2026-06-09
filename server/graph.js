@@ -111,12 +111,12 @@ async function getToken() {
   return cachedToken;
 }
 
-async function graphGet(path) {
+// GET an absolute Graph URL (used for both the first page and @odata.nextLink,
+// which Graph returns as a fully-qualified URL).
+async function graphGetUrl(url) {
   const token = await getToken();
-  const res = await fetchWithRetry(`https://graph.microsoft.com/v1.0${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Graph GET ${path} -> ${res.status}: ${await res.text()}`);
+  const res = await fetchWithRetry(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Graph GET ${url} -> ${res.status}: ${await res.text()}`);
   return res.json();
 }
 
@@ -124,14 +124,24 @@ const FIELDS =
   'id,conversationId,subject,bodyPreview,body,from,sender,replyTo,' +
   'toRecipients,ccRecipients,isDraft,receivedDateTime,sentDateTime';
 
-// Delegated: operate on the signed-in mailbox via /me.
-export async function fetchMessages(folder, sinceIso, top = 25) {
+// Delegated: operate on the signed-in mailbox via /me. Follows @odata.nextLink
+// so a busy window isn't truncated at one page. maxPages is a safety cap
+// (pageSize*maxPages messages) so a wide window can't trigger a runaway crawl.
+export async function fetchMessages(folder, sinceIso, { pageSize = 50, maxPages = 20 } = {}) {
   let path =
     `/me/mailFolders/${folder}/messages` +
-    `?$select=${FIELDS}&$top=${top}&$orderby=receivedDateTime desc`;
+    `?$select=${FIELDS}&$top=${pageSize}&$orderby=receivedDateTime desc`;
   if (sinceIso) path += `&$filter=receivedDateTime ge ${encodeURIComponent(sinceIso)}`;
-  const json = await graphGet(path);
-  return json.value || [];
+
+  const out = [];
+  let url = `https://graph.microsoft.com/v1.0${path}`;
+  for (let page = 0; page < maxPages && url; page++) {
+    const json = await graphGetUrl(url);
+    out.push(...(json.value || []));
+    url = json['@odata.nextLink'] || null;
+  }
+  if (url) console.error(`[graph] ${folder}: hit maxPages=${maxPages}, more messages may remain`);
+  return out;
 }
 
 export async function sendMail({ to, subject, html }) {

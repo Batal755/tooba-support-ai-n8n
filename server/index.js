@@ -3,15 +3,18 @@ import { fetchMessages, ensureAuth } from './graph.js';
 import { postMessage } from './slack.js';
 import { normalizeIncoming, normalizeSent } from './normalize.js';
 import {
-  load, getThread, setThread, touchThread, findThreadByEmail,
+  load, getThread, setThread, touchThread, findThreadByEmail, pruneThreads,
   inboxSeen, sentSeen, markInbox, markSent,
   getState, setLastInboxSync, setLastSentSync,
 } from './store.js';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+const hoursAgoIso = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
 
 async function processInbox() {
-  const since = getState().lastInboxSync;
+  // Cold start (no saved cursor): only look back coldStartHours so the first
+  // run doesn't post a backlog of old mail into Slack.
+  const since = getState().lastInboxSync || hoursAgoIso(config.coldStartHours);
   const msgs = await fetchMessages('inbox', since);
   // oldest first so threads are created before follow-ups
   msgs.reverse();
@@ -70,7 +73,7 @@ async function processInbox() {
 }
 
 async function processSent() {
-  const since = getState().lastSentSync;
+  const since = getState().lastSentSync || hoursAgoIso(config.coldStartHours);
   const msgs = await fetchMessages('sentitems', since);
   msgs.reverse();
 
@@ -96,6 +99,10 @@ async function processSent() {
 async function tick() {
   try { await processInbox(); } catch (e) { log('inbox error:', e.message); }
   try { await processSent(); }  catch (e) { log('sent error:', e.message); }
+  try {
+    const removed = pruneThreads(config.threadRetentionDays * 86_400_000);
+    if (removed) log(`pruned ${removed} inactive thread mapping(s)`);
+  } catch (e) { log('prune error:', e.message); }
 }
 
 async function main() {

@@ -30,6 +30,7 @@ export function htmlToText(raw) {
   if (!raw) return '';
   return convert(String(raw), HTML_TO_TEXT_OPTS)
     .replace(/\r/g, '')
+    .replace(/\u00A0/g, " ") // &nbsp; -> normal space (line-based regexes expect it)
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
