@@ -106,7 +106,8 @@ export function normalizeIncoming(item) {
   if (senderEmail.includes('support@tooba.com')) return { ok: false, skipReason: 'own support email' };
   if (isOwn(senderEmail) && !explicitEmail && !embeddedEmail && !bodyEmail)
     return { ok: false, skipReason: 'relay no-reply, customer not found' };
-  if (!body || body.length < 3) return { ok: false, skipReason: 'body too short' };
+  // Keep short but real replies ("Ок", "Да", "+1"); only drop truly empty bodies.
+  if (!body || body.length < 1) return { ok: false, skipReason: 'body empty' };
 
   return { ok: true, messageId, conversationId, subject, body, senderEmail, senderName };
 }

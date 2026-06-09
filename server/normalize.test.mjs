@@ -18,7 +18,7 @@ import { rmSync } from 'node:fs';
 import { htmlToText, normalizeIncoming, normalizeSent } from './normalize.js';
 import {
   load, setThread, getThread, touchThread, findThreadByEmail, pruneThreads,
-  inboxSeen, markInbox, getState,
+  inboxSeen, markInbox, getState, normSubject, commitInbox,
 } from './store.js';
 
 const DAY = 86_400_000;
@@ -81,14 +81,24 @@ test('normalizeIncoming: own support email is skipped', () => {
   assert.equal(r.ok, false);
 });
 
-test('normalizeIncoming: too-short body is skipped', () => {
+test('normalizeIncoming: short but real reply is kept', () => {
   const r = normalizeIncoming({
     id: 'm4', conversationId: 'c4', subject: 'x',
-    body: { contentType: 'HTML', content: '<p>ок</p>' },
+    body: { contentType: 'HTML', content: '<p>Ок</p>' },
+    from: { emailAddress: { address: 'buyer@gmail.com' } },
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.body, 'Ок');
+});
+
+test('normalizeIncoming: empty body is skipped', () => {
+  const r = normalizeIncoming({
+    id: 'm4b', conversationId: 'c4b', subject: 'x',
+    body: { contentType: 'HTML', content: '<p>&nbsp;</p>' },
     from: { emailAddress: { address: 'buyer@gmail.com' } },
   });
   assert.equal(r.ok, false);
-  assert.equal(r.skipReason, 'body too short');
+  assert.equal(r.skipReason, 'body empty');
 });
 
 test('normalizeIncoming: relay with no recoverable customer is skipped', () => {
@@ -153,6 +163,41 @@ test('store: pruneThreads drops only inactive mappings', () => {
   assert.equal(removed, 1);
   assert.equal(getThread('old'), null);
   assert.ok(getThread('new'));
+
+  rmSync('/tmp/tooba-test-state.json', { force: true });
+});
+
+test('store: normSubject strips reply/forward prefixes', () => {
+  assert.equal(normSubject('Re: Заказ 12'), 'заказ 12');
+  assert.equal(normSubject('FWD: Fw: Re:  Заказ 12 '), 'заказ 12');
+  assert.equal(normSubject('Ответ: Заказ 12'), 'заказ 12');
+  assert.notEqual(normSubject('Другой вопрос'), normSubject('Заказ 12'));
+});
+
+test('store: findThreadByEmail groups same topic, splits different topic', () => {
+  rmSync('/tmp/tooba-test-state.json', { force: true });
+  load();
+  setThread('cvA', { threadTs: '111.1', channelId: 'C0', senderEmail: 'a@c.com', subject: 'Заказ 12' });
+
+  // a reply that lost its conversationId — "Re: Заказ 12" must regroup
+  assert.equal(findThreadByEmail('a@c.com', 7 * DAY, 'Re: Заказ 12')?.threadTs, '111.1');
+  // a genuinely different question from the same customer must NOT merge
+  assert.equal(findThreadByEmail('a@c.com', 7 * DAY, 'Вопрос по оплате'), null);
+
+  rmSync('/tmp/tooba-test-state.json', { force: true });
+});
+
+test('store: commitInbox writes mapping and marks processed in one step', () => {
+  rmSync('/tmp/tooba-test-state.json', { force: true });
+  load();
+  commitInbox('msg-1', 'cvX', { threadTs: '5.5', channelId: 'C0', senderEmail: 'z@c.com', subject: 'T' });
+  assert.equal(inboxSeen('msg-1'), true);
+  assert.equal(getThread('cvX')?.threadTs, '5.5');
+
+  // followup commit (no threadData) only refreshes activity + marks the id
+  commitInbox('msg-2', 'cvX', null);
+  assert.equal(inboxSeen('msg-2'), true);
+  assert.equal(getThread('cvX')?.threadTs, '5.5');
 
   rmSync('/tmp/tooba-test-state.json', { force: true });
 });

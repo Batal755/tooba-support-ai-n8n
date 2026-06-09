@@ -3,7 +3,7 @@ import { fetchMessages, ensureAuth } from './graph.js';
 import { postMessage } from './slack.js';
 import { normalizeIncoming, normalizeSent } from './normalize.js';
 import {
-  load, getThread, setThread, touchThread, findThreadByEmail, pruneThreads,
+  load, getThread, findThreadByEmail, pruneThreads, commitInbox, commitSent,
   inboxSeen, sentSeen, markInbox, markSent,
   getState, setLastInboxSync, setLastSentSync,
 } from './store.js';
@@ -42,37 +42,40 @@ async function processInbox() {
     }
 
     // 1. Direct match: this conversationId already has a thread.
-    let mapping = getThread(n.conversationId);
+    let target = getThread(n.conversationId);
+    // threadData != null => commit will (re)write the mapping for this
+    // conversationId; null => it's an existing mapping, just refresh activity.
+    let threadData = null;
 
-    // 2. Fallback: no thread for this conversationId, but the same customer
-    //    has a recent thread (they started a new subject). Reuse it and link
-    //    this conversationId so future messages map directly.
-    if (!mapping && config.threadGroupDays > 0) {
-      const byEmail = findThreadByEmail(n.senderEmail, config.threadGroupDays * 86_400_000);
+    // 2. Fallback: same customer + same topic has a recent thread (a reply that
+    //    lost its conversationId). Reuse it and link this conversationId.
+    if (!target && config.threadGroupDays > 0) {
+      const byEmail = findThreadByEmail(n.senderEmail, config.threadGroupDays * 86_400_000, n.subject);
       if (byEmail) {
-        setThread(n.conversationId, {
+        target = byEmail;
+        threadData = {
           threadTs: byEmail.threadTs,
           channelId: byEmail.channelId,
           senderEmail: n.senderEmail,
           subject: n.subject,
-        });
-        mapping = getThread(n.conversationId);
-        log('inbox: linked new conversation to existing thread by email', byEmail.threadTs);
+        };
+        log('inbox: linked new conversation to existing thread by email+subject', byEmail.threadTs);
       }
     }
 
-    if (mapping) {
+    if (target) {
       await postMessage({
-        threadTs: mapping.threadTs,
+        threadTs: target.threadTs,
         text: `*Клиент написал снова*\n*Email:* ${n.senderEmail}\n*Тема:* ${n.subject}\n\n${n.body}`,
       });
-      touchThread(n.conversationId);
-      log('inbox follow-up posted to thread', mapping.threadTs);
+      // Atomic: persist link (if any) + mark processed in one save.
+      commitInbox(raw.id, n.conversationId, threadData);
+      log('inbox follow-up posted to thread', target.threadTs);
     } else {
       const ts = await postMessage({
         text: `*Новое письмо от клиента*\n*Email:* ${n.senderEmail}\n*Тема:* ${n.subject}\n\n${n.body}`,
       });
-      setThread(n.conversationId, {
+      commitInbox(raw.id, n.conversationId, {
         threadTs: ts,
         channelId: config.slack.channelId,
         senderEmail: n.senderEmail,
@@ -80,7 +83,6 @@ async function processInbox() {
       });
       log('inbox new thread created', ts);
     }
-    markInbox(raw.id);
   }
   const newest = newestReceived(msgs, cursor);
   if (newest > (Date.parse(cursor || '') || 0)) setLastInboxSync(new Date(newest).toISOString());
@@ -103,9 +105,8 @@ async function processSent() {
       threadTs: mapping.threadTs,
       text: `*Менеджер ответил клиенту*\n*Кому:* ${n.toEmails || mapping.senderEmail}\n\n${n.replyText}`,
     });
-    touchThread(n.conversationId);
+    commitSent(raw.id, n.conversationId); // atomic: touch activity + mark processed
     log('sent reply mirrored to thread', mapping.threadTs);
-    markSent(raw.id);
   }
   const newest = newestReceived(msgs, cursor);
   if (newest > (Date.parse(cursor || '') || 0)) setLastSentSync(new Date(newest).toISOString());
