@@ -11,11 +11,24 @@ import {
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const hoursAgoIso = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
 
+// Cursor is the newest receivedDateTime we have actually seen (clock-independent,
+// monotonic). We query with a 60s overlap so boundary/equal-timestamp messages
+// aren't missed; dedup drops the re-reads.
+const OVERLAP_MS = 60_000;
+const sinceFromCursor = (cursor) =>
+  cursor ? new Date(Date.parse(cursor) - OVERLAP_MS).toISOString()
+         : hoursAgoIso(config.coldStartHours);
+const newestReceived = (msgs, cursor) => {
+  let newest = Date.parse(cursor || '') || 0;
+  for (const raw of msgs) newest = Math.max(newest, Date.parse(raw.receivedDateTime) || 0);
+  return newest;
+};
+
 async function processInbox() {
   // Cold start (no saved cursor): only look back coldStartHours so the first
   // run doesn't post a backlog of old mail into Slack.
-  const since = getState().lastInboxSync || hoursAgoIso(config.coldStartHours);
-  const msgs = await fetchMessages('inbox', since);
+  const cursor = getState().lastInboxSync;
+  const msgs = await fetchMessages('inbox', sinceFromCursor(cursor));
   // oldest first so threads are created before follow-ups
   msgs.reverse();
 
@@ -69,12 +82,13 @@ async function processInbox() {
     }
     markInbox(raw.id);
   }
-  setLastInboxSync(new Date(Date.now() - 60_000).toISOString());
+  const newest = newestReceived(msgs, cursor);
+  if (newest > (Date.parse(cursor || '') || 0)) setLastInboxSync(new Date(newest).toISOString());
 }
 
 async function processSent() {
-  const since = getState().lastSentSync || hoursAgoIso(config.coldStartHours);
-  const msgs = await fetchMessages('sentitems', since);
+  const cursor = getState().lastSentSync;
+  const msgs = await fetchMessages('sentitems', sinceFromCursor(cursor));
   msgs.reverse();
 
   for (const raw of msgs) {
@@ -93,16 +107,28 @@ async function processSent() {
     log('sent reply mirrored to thread', mapping.threadTs);
     markSent(raw.id);
   }
-  setLastSentSync(new Date(Date.now() - 60_000).toISOString());
+  const newest = newestReceived(msgs, cursor);
+  if (newest > (Date.parse(cursor || '') || 0)) setLastSentSync(new Date(newest).toISOString());
 }
 
+// Guard against overlapping runs: setInterval does not wait for the previous
+// async tick, and a tick can exceed pollSeconds during retry backoff. Two
+// concurrent ticks could double-post to Slack and rotate the MS refresh token
+// twice. Skip a tick if the previous one is still running.
+let ticking = false;
 async function tick() {
-  try { await processInbox(); } catch (e) { log('inbox error:', e.message); }
-  try { await processSent(); }  catch (e) { log('sent error:', e.message); }
+  if (ticking) { log('previous tick still running — skipping this interval'); return; }
+  ticking = true;
   try {
-    const removed = pruneThreads(config.threadRetentionDays * 86_400_000);
-    if (removed) log(`pruned ${removed} inactive thread mapping(s)`);
-  } catch (e) { log('prune error:', e.message); }
+    try { await processInbox(); } catch (e) { log('inbox error:', e.message); }
+    try { await processSent(); }  catch (e) { log('sent error:', e.message); }
+    try {
+      const removed = pruneThreads(config.threadRetentionDays * 86_400_000);
+      if (removed) log(`pruned ${removed} inactive thread mapping(s)`);
+    } catch (e) { log('prune error:', e.message); }
+  } finally {
+    ticking = false;
+  }
 }
 
 async function main() {

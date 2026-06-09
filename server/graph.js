@@ -15,17 +15,24 @@ let tokenExpiry = 0;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Retry fetch up to 4 times with exponential backoff (2s, 4s, 8s, 16s).
-// Retries on network errors (fetch failed) and 5xx responses.
+// - 5xx and 429 are safe to retry for any method (the server did not process
+//   the request); 429 honours the Retry-After header.
+// - On a network error we only retry idempotent methods (GET/HEAD). A POST may
+//   have already been processed server-side before the connection dropped, so
+//   retrying it could duplicate the side effect (e.g. a sent mail).
 async function fetchWithRetry(url, opts = {}, attempt = 0) {
+  const idempotent = !opts.method || ['GET', 'HEAD'].includes(opts.method.toUpperCase());
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30_000), ...opts });
-    if (res.status >= 500 && attempt < 4) {
-      await sleep(2 ** attempt * 2000);
+    if ((res.status >= 500 || res.status === 429) && attempt < 4) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      const delay = retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 2000;
+      await sleep(delay);
       return fetchWithRetry(url, opts, attempt + 1);
     }
     return res;
   } catch (err) {
-    if (attempt < 4) {
+    if (idempotent && attempt < 4) {
       const delay = 2 ** attempt * 2000;
       console.error(`[graph] fetch error (attempt ${attempt + 1}/4), retry in ${delay / 1000}s:`, err.message);
       await sleep(delay);
