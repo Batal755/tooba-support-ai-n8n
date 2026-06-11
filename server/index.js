@@ -93,6 +93,9 @@ async function processSent() {
   const msgs = await fetchMessages('sentitems', sinceFromCursor(cursor));
   msgs.reverse();
 
+  // Guard against Graph returning duplicate sent items for the same conversation.
+  const mirroredThisTick = new Set();
+
   for (const raw of msgs) {
     if (sentSeen(raw.id)) continue;
     const n = normalizeSent(raw);
@@ -101,10 +104,13 @@ async function processSent() {
     const mapping = getThread(n.conversationId);
     if (!mapping) { markSent(raw.id); continue; } // no inbound yet — skip
 
+    if (mirroredThisTick.has(n.conversationId)) { markSent(raw.id); continue; }
+
     await postMessage({
       threadTs: mapping.threadTs,
-      text: `*Менеджер ответил клиенту*\n*Кому:* ${n.toEmails || mapping.senderEmail}\n\n${n.replyText}`,
+      text: `*Кому:* ${n.toEmails || mapping.senderEmail}\n\n${n.replyText}`,
     });
+    mirroredThisTick.add(n.conversationId);
     commitSent(raw.id, n.conversationId); // atomic: touch activity + mark processed
     log('sent reply mirrored to thread', mapping.threadTs);
   }
